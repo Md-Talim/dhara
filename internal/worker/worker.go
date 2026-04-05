@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/md-talim/relay/internal/ctxlog"
 	"github.com/md-talim/relay/internal/store"
 	"github.com/md-talim/relay/internal/tasks"
 )
@@ -47,31 +48,42 @@ func (w *Worker) processNext(ctx context.Context) error {
 		return fmt.Errorf("claim task: %w", err)
 	}
 
+	taskLogger := w.taskLogger(task)
 	handler, ok := w.registry.Get(task.Type)
 	if !ok {
+		taskLogger.Warn("no handler registered for task type")
 		return w.store.MarkDead(ctx, task.ID.String(), "no handler registered for type: "+task.Type)
 	}
 
 	handlerCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	err = handler(handlerCtx, task.Payload)
-	if err != nil {
+	handlerCtx = ctxlog.WithLogger(handlerCtx, taskLogger)
+
+	if err = handler(handlerCtx, task.Payload); err != nil {
 		return w.handleFailure(ctx, task, err)
 	}
 
+	taskLogger.Info("task completed")
 	return w.store.MarkCompleted(ctx, task.ID.String())
 }
 
 func (w *Worker) handleFailure(ctx context.Context, task *store.Task, err error) error {
-	w.logger.Warn("task failed",
-		"task_id", task.ID.String(),
-		"type", task.Type,
-		"attempts", task.Attempts,
-		"max_retries", task.MaxRetries,
+	taskLogger := w.taskLogger(task)
+	taskLogger.Warn("task failed",
 		"err", err,
+		"max_retries", task.MaxRetries,
 	)
 
 	// TODO: handle retries and backoff; for now mark dead to keep demo predictable
 	return w.store.MarkDead(ctx, task.ID.String(), err.Error())
+}
+
+func (w *Worker) taskLogger(task *store.Task) *slog.Logger {
+	return w.logger.With(
+		"worker_id", w.workerID,
+		"task_id", task.ID.String(),
+		"task_type", task.Type,
+		"attempts", task.Attempts,
+	)
 }
