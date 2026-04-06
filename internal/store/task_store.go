@@ -42,6 +42,7 @@ type TaskStore interface {
 	Cancel(ctx context.Context, id string) (*Task, error)
 	Claim(ctx context.Context, workerID string) (*Task, error)
 	MarkCompleted(ctx context.Context, taskID, workerID string, durationMS int64) error
+	MarkPending(ctx context.Context, task *Task, lastError string, runAt time.Time) error
 	MarkDead(ctx context.Context, taskID, lastError, reason string) error
 }
 
@@ -257,6 +258,50 @@ func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID, workerID
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit complete: %w", err)
+	}
+
+	return nil
+}
+
+func (ts *PostgresTaskStore) MarkPending(ctx context.Context, task *Task, lastError string, nextRunAt time.Time) error {
+	tx, err := ts.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	query := `
+		UPDATE tasks
+		SET
+			status = 'PENDING',
+			last_error = $2,
+			run_at = $3,
+			locked_by = NULL,
+			locked_at = NULL,
+			updated_at = now()
+		WHERE id = $1 AND status = 'RUNNING'
+		RETURNING id
+	`
+
+	var id uuid.UUID
+	if err := tx.QueryRow(ctx, query, task.ID, lastError, nextRunAt).Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrTaskNotFound
+		}
+		return fmt.Errorf("mark pending: %w", err)
+	}
+
+	pendingLogMessage := fmt.Sprintf("attempt %d/%d failed, retrying at %s: %s",
+		task.Attempts, task.MaxRetries,
+		nextRunAt.UTC().Format(time.RFC3339),
+		lastError,
+	)
+	if err := ts.insertLog(ctx, tx, task.ID.String(), "PENDING", pendingLogMessage); err != nil {
+		return fmt.Errorf("insert pending log: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit pending: %w", err)
 	}
 
 	return nil

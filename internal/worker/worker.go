@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/md-talim/relay/internal/ctxlog"
@@ -74,8 +75,20 @@ func (w *Worker) handleFailure(ctx context.Context, task *store.Task, err error)
 	taskLogger := w.taskLogger(task)
 	taskLogger.Warn("task failed", "err", err)
 
-	// TODO: handle retries and backoff; for now mark dead to keep demo predictable
-	return w.store.MarkDead(ctx, task.ID.String(), err.Error(), "all attempts exhausted")
+	if task.Attempts >= task.MaxRetries {
+		return w.store.MarkDead(ctx, task.ID.String(), err.Error(), "all attempts exhausted")
+	}
+
+	// exponential backoff: 10s, 20s, 40s, 80s...
+	backoff := time.Duration(math.Pow(2, float64(task.Attempts-1))) * 10 * time.Second
+	nextRunAt := time.Now().Add(backoff)
+
+	taskLogger.Info("retrying task",
+		"next_run_at", nextRunAt.UTC().Format(time.RFC3339),
+		"backoff_ms", backoff.Milliseconds(),
+	)
+
+	return w.store.MarkPending(ctx, task, err.Error(), nextRunAt)
 }
 
 func (w *Worker) taskLogger(task *store.Task) *slog.Logger {
