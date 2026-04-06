@@ -52,7 +52,7 @@ func (w *Worker) processNext(ctx context.Context) error {
 	handler, ok := w.registry.Get(task.Type)
 	if !ok {
 		taskLogger.Warn("no handler registered for task type")
-		return w.store.MarkDead(ctx, task.ID.String(), "no handler registered for type: "+task.Type)
+		return w.store.MarkDead(ctx, task.ID.String(), "no handler registered for type: "+task.Type, "no handler registered")
 	}
 
 	handlerCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -60,23 +60,22 @@ func (w *Worker) processNext(ctx context.Context) error {
 
 	handlerCtx = ctxlog.WithLogger(handlerCtx, taskLogger)
 
+	taskStartTime := time.Now()
 	if err = handler(handlerCtx, task.Payload); err != nil {
 		return w.handleFailure(ctx, task, err)
 	}
 
+	taskDurationMS := time.Since(taskStartTime).Milliseconds()
 	taskLogger.Info("task completed")
-	return w.store.MarkCompleted(ctx, task.ID.String())
+	return w.store.MarkCompleted(ctx, task.ID.String(), w.workerID, taskDurationMS)
 }
 
 func (w *Worker) handleFailure(ctx context.Context, task *store.Task, err error) error {
 	taskLogger := w.taskLogger(task)
-	taskLogger.Warn("task failed",
-		"err", err,
-		"max_retries", task.MaxRetries,
-	)
+	taskLogger.Warn("task failed", "err", err)
 
 	// TODO: handle retries and backoff; for now mark dead to keep demo predictable
-	return w.store.MarkDead(ctx, task.ID.String(), err.Error())
+	return w.store.MarkDead(ctx, task.ID.String(), err.Error(), "all attempts exhausted")
 }
 
 func (w *Worker) taskLogger(task *store.Task) *slog.Logger {
@@ -85,5 +84,6 @@ func (w *Worker) taskLogger(task *store.Task) *slog.Logger {
 		"task_id", task.ID.String(),
 		"task_type", task.Type,
 		"attempts", task.Attempts,
+		"max_retries", task.MaxRetries,
 	)
 }

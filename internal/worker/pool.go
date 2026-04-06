@@ -50,6 +50,7 @@ func NewWorkerPool(
 	return &WorkerPool{
 		store:        store,
 		logger:       logger.With("component", "worker_pool"),
+		registry:     registry,
 		pollInterval: pollInterval,
 		workerPrefix: workerPrefix,
 		concurrency:  concurrency,

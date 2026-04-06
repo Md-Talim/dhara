@@ -202,7 +202,7 @@ func (f *fakeTaskStore) Heartbeat(ctx context.Context, taskID, workerID string) 
 	return f.heartbeat(ctx, taskID, workerID)
 }
 
-func (f *fakeTaskStore) MarkCompleted(ctx context.Context, taskID string) error {
+func (f *fakeTaskStore) MarkCompleted(ctx context.Context, taskID, workerID string, durationMS int64) error {
 	return f.markCompleted(ctx, taskID)
 }
 
@@ -210,7 +210,7 @@ func (f *fakeTaskStore) MarkPending(ctx context.Context, taskID, lastError strin
 	return f.markPending(ctx, taskID, lastError, runAt)
 }
 
-func (f *fakeTaskStore) MarkDead(ctx context.Context, taskID, lastError string) error {
+func (f *fakeTaskStore) MarkDead(ctx context.Context, taskID, lastError, reason string) error {
 	return f.markDead(ctx, taskID, lastError)
 }
 

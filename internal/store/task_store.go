@@ -41,8 +41,8 @@ type TaskStore interface {
 	GetById(ctx context.Context, id string) (*Task, error)
 	Cancel(ctx context.Context, id string) (*Task, error)
 	Claim(ctx context.Context, workerID string) (*Task, error)
-	MarkCompleted(ctx context.Context, taskID string) error
-	MarkDead(ctx context.Context, taskID, lastError string) error
+	MarkCompleted(ctx context.Context, taskID, workerID string, durationMS int64) error
+	MarkDead(ctx context.Context, taskID, lastError, reason string) error
 }
 
 type PostgresTaskStore struct {
@@ -211,10 +211,8 @@ func (ts *PostgresTaskStore) Claim(ctx context.Context, workerID string) (*Task,
 		return nil, err
 	}
 
-	if _, err = tx.Exec(ctx,
-		`INSERT INTO task_logs(task_id, status, message) VALUES($1, $2, $3)`,
-		task.ID, "RUNNING", fmt.Sprintf("claimed by worker %s (attempt %d/%d)", workerID, task.Attempts, task.MaxRetries),
-	); err != nil {
+	claimLogMessage := fmt.Sprintf("claimed by worker %s (attempt %d/%d)", workerID, task.Attempts, task.MaxRetries)
+	if err := ts.insertLog(ctx, tx, task.ID.String(), "RUNNING", claimLogMessage); err != nil {
 		return nil, fmt.Errorf("insert claim log: %w", err)
 	}
 
@@ -225,7 +223,7 @@ func (ts *PostgresTaskStore) Claim(ctx context.Context, workerID string) (*Task,
 	return task, nil
 }
 
-func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID string) error {
+func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID, workerID string, durationMs int64) error {
 	tx, err := ts.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -252,11 +250,8 @@ func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID string) e
 		return fmt.Errorf("mark complete: %w", err)
 	}
 
-	if _, err := tx.Exec(
-		ctx,
-		`INSERT INTO task_logs(task_id, status, message) VALUES($1, $2, $3)`,
-		id, "COMPLETED", "task completed successfully",
-	); err != nil {
+	completedLogMessage := fmt.Sprintf("completed by worker %s after %dms", workerID, durationMs)
+	if err := ts.insertLog(ctx, tx, taskID, "COMPLETED", completedLogMessage); err != nil {
 		return fmt.Errorf("insert complete log: %w", err)
 	}
 
@@ -267,7 +262,7 @@ func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID string) e
 	return nil
 }
 
-func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, lastError string) error {
+func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, lastError, reason string) error {
 	tx, err := ts.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -275,16 +270,16 @@ func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, lastError str
 	defer tx.Rollback(ctx)
 
 	updateQuery := `
-			UPDATE tasks
-			SET
-				status = 'DEAD',
-				last_error = $2,
-				locked_by = NULL,
-				locked_at = NULL,
-				updated_at = now()
-			WHERE id = $1 AND status = 'RUNNING'
-			RETURNING id
-		`
+		UPDATE tasks
+		SET
+			status = 'DEAD',
+			last_error = $2,
+			locked_by = NULL,
+			locked_at = NULL,
+			updated_at = now()
+		WHERE id = $1 AND status = 'RUNNING'
+		RETURNING id
+	`
 
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, updateQuery, taskID, lastError).Scan(&id); err != nil {
@@ -294,11 +289,8 @@ func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, lastError str
 		return fmt.Errorf("mark dead: %w", err)
 	}
 
-	if _, err := tx.Exec(
-		ctx,
-		`INSERT INTO task_logs(task_id, status, message) VALUES($1, $2, $3)`,
-		id, "DEAD", fmt.Sprintf("task marked dead: %s", lastError),
-	); err != nil {
+	deadLogMessage := fmt.Sprintf("makred dead: %s", lastError)
+	if err := ts.insertLog(ctx, tx, taskID, "DEAD", deadLogMessage); err != nil {
 		return fmt.Errorf("insert dead log: %w", err)
 	}
 
@@ -323,4 +315,13 @@ func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, tas
 	)
 
 	return task, err
+}
+
+func (ts *PostgresTaskStore) insertLog(ctx context.Context, tx pgx.Tx, taskID, status, message string) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO task_logs(task_id, status, message)
+		VALUES($1, $2, $3)
+	`, taskID, status, message,
+	)
+	return err
 }
