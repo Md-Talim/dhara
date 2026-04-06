@@ -160,10 +160,7 @@ func (ts *PostgresTaskStore) Cancel(ctx context.Context, id string) (*Task, erro
 		return current, nil
 	}
 
-	if _, err = tx.Exec(ctx, `
-		INSERT INTO task_logs(task_id, status, message)
-		VALUES($1, $2, $3)
-	`, task.ID, task.Status, "task canceled by user request"); err != nil {
+	if err := ts.insertLog(ctx, tx, task.ID.String(), "CANCELED", "task canceled by user request"); err != nil {
 		return nil, fmt.Errorf("insert cancel log: %w", err)
 	}
 
@@ -334,7 +331,7 @@ func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, lastError, re
 		return fmt.Errorf("mark dead: %w", err)
 	}
 
-	deadLogMessage := fmt.Sprintf("makred dead: %s", lastError)
+	deadLogMessage := fmt.Sprintf("marked dead: %s", reason)
 	if err := ts.insertLog(ctx, tx, taskID, "DEAD", deadLogMessage); err != nil {
 		return fmt.Errorf("insert dead log: %w", err)
 	}
