@@ -61,7 +61,7 @@ func (w *Worker) processNext(ctx context.Context) error {
 
 	handlerCtx = ctxlog.WithLogger(handlerCtx, taskLogger)
 
-	stopHeartbeat := w.startHeartbeat(handlerCtx, task.ID.String())
+	stopHeartbeat := w.startHeartbeat(handlerCtx, task)
 	defer stopHeartbeat()
 
 	taskStartTime := time.Now()
@@ -74,19 +74,24 @@ func (w *Worker) processNext(ctx context.Context) error {
 	return w.store.MarkCompleted(ctx, task.ID.String(), w.workerID, taskDurationMS)
 }
 
-func (w *Worker) startHeartbeat(ctx context.Context, taskID string) func() {
-	ctx, cancel := context.WithCancel(ctx)
+func (w *Worker) startHeartbeat(heartbeatCtx context.Context, task *store.Task) func() {
+	heartbeatCtx, cancel := context.WithCancel(heartbeatCtx)
+	taskLogger := w.taskLogger(task)
 
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
 
 		select {
-		case <-ctx.Done():
+		case <-heartbeatCtx.Done():
 			return
 		case <-ticker.C:
-			err := w.store.Heartbeat(ctx, taskID, w.workerID)
-			if err != nil {
-				w.logger.Warn("heartbeat failed", "worker_id", w.workerID, "task_id", taskID, "err", err)
+			if err := w.store.Heartbeat(heartbeatCtx, task.ID.String(), w.workerID); err != nil {
+				if errors.Is(err, store.ErrTaskOwnershipLost) {
+					taskLogger.Warn("lost task ownership during heartbeat")
+				} else {
+					taskLogger.Warn("heartbeat failed", "err", err)
+				}
 				cancel()
 				return
 			}

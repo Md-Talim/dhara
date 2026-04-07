@@ -222,7 +222,7 @@ func (ts *PostgresTaskStore) Claim(ctx context.Context, workerID string) (*Task,
 	return task, nil
 }
 
-func (ts *PostgresTaskStore) Hearbeat(ctx context.Context, taskID, workerID string) error {
+func (ts *PostgresTaskStore) Heartbeat(ctx context.Context, taskID, workerID string) error {
 	query := `
 		UPDATE tasks
 		SET
@@ -238,7 +238,7 @@ func (ts *PostgresTaskStore) Hearbeat(ctx context.Context, taskID, workerID stri
 		return fmt.Errorf("hearbeat task: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrTaskNotFound
+		return ErrTaskOwnershipLost
 	}
 
 	return nil
