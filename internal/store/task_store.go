@@ -41,6 +41,7 @@ type TaskStore interface {
 	GetById(ctx context.Context, id string) (*Task, error)
 	Cancel(ctx context.Context, id string) (*Task, error)
 	Claim(ctx context.Context, workerID string) (*Task, error)
+	Heartbeat(ctx context.Context, taskID, workerID string) error
 	MarkCompleted(ctx context.Context, taskID, workerID string, durationMS int64) error
 	MarkPending(ctx context.Context, task *Task, lastError string, runAt time.Time) error
 	MarkDead(ctx context.Context, taskID, lastError, reason string) error
@@ -219,6 +220,28 @@ func (ts *PostgresTaskStore) Claim(ctx context.Context, workerID string) (*Task,
 	}
 
 	return task, nil
+}
+
+func (ts *PostgresTaskStore) Hearbeat(ctx context.Context, taskID, workerID string) error {
+	query := `
+		UPDATE tasks
+		SET
+			locked_at = now(),
+			updated_at = now()
+		WHERE id = $1
+			AND status = 'RUNNING'
+			AND locked_by = $2
+	`
+
+	tag, err := ts.db.Exec(ctx, query, taskID, workerID)
+	if err != nil {
+		return fmt.Errorf("hearbeat task: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTaskNotFound
+	}
+
+	return nil
 }
 
 func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID, workerID string, durationMs int64) error {

@@ -61,14 +61,39 @@ func (w *Worker) processNext(ctx context.Context) error {
 
 	handlerCtx = ctxlog.WithLogger(handlerCtx, taskLogger)
 
+	stopHeartbeat := w.startHeartbeat(handlerCtx, task.ID.String())
+	defer stopHeartbeat()
+
 	taskStartTime := time.Now()
 	if err = handler(handlerCtx, task.Payload); err != nil {
 		return w.handleFailure(ctx, task, err)
 	}
 
 	taskDurationMS := time.Since(taskStartTime).Milliseconds()
-	taskLogger.Info("task completed")
+	taskLogger.Info("task completed", "duration_ms", taskDurationMS)
 	return w.store.MarkCompleted(ctx, task.ID.String(), w.workerID, taskDurationMS)
+}
+
+func (w *Worker) startHeartbeat(ctx context.Context, taskID string) func() {
+	ctx, cancel := context.WithCancel(ctx)
+
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			err := w.store.Heartbeat(ctx, taskID, w.workerID)
+			if err != nil {
+				w.logger.Warn("heartbeat failed", "worker_id", w.workerID, "task_id", taskID, "err", err)
+				cancel()
+				return
+			}
+		}
+	}()
+
+	return cancel
 }
 
 func (w *Worker) handleFailure(ctx context.Context, task *store.Task, err error) error {
