@@ -30,7 +30,7 @@ type Config struct {
 
 func NewFromEnv() (*Config, error) {
 	c := &Config{
-		WorkerPrefix:      getEnvString("WORKER_PREFIX", "relay-worker"),
+		WorkerPrefix:      getEnvString("WORKER_PREFIX", "dhara-worker"),
 		WorkerCount:       getEnvInt("WORKER_COUNT", 5),
 		PollInterval:      getEnvDuration("POLL_INTERVAL", time.Second),
 		HeartbeatInterval: getEnvDuration("HEARTBEAT_INTERVAL", 30*time.Second),

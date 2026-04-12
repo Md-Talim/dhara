@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/md-talim/relay/internal/db"
-	"github.com/md-talim/relay/internal/db/migrations"
-	"github.com/md-talim/relay/internal/store"
+	"github.com/md-talim/dhara/internal/db"
+	"github.com/md-talim/dhara/internal/db/migrations"
+	"github.com/md-talim/dhara/internal/store"
 )
 
 var testStore store.TaskStore
@@ -308,7 +308,7 @@ func TestGetTaskById_NotFound(t *testing.T) {
 }
 
 func setupTestDB(ctx context.Context) (*pgxpool.Pool, error) {
-	os.Setenv("RELAY_DATABASE_URL", "postgres://relay:relay@localhost:5433/relay_test?sslmode=disable")
+	os.Setenv("DHARA_DATABASE_URL", "postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disable")
 
 	pool, err := db.Open(ctx)
 	if err != nil {

@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/md-talim/relay/internal/app"
-	"github.com/md-talim/relay/internal/config"
+	"github.com/md-talim/dhara/internal/app"
+	"github.com/md-talim/dhara/internal/config"
 )
 
 func main() {

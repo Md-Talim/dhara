@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/md-talim/relay/internal/db"
-	"github.com/md-talim/relay/internal/db/migrations"
+	"github.com/md-talim/dhara/internal/db"
+	"github.com/md-talim/dhara/internal/db/migrations"
 )
 
 func TestRunMigrations(t *testing.T) {
-	os.Setenv("RELAY_DATABASE_URL", "postgres://relay:relay@localhost:5433/relay_test?sslmode=disable")
+	os.Setenv("DHARA_DATABASE_URL", "postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disable")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

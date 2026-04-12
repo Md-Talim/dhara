@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/md-talim/relay/internal/store"
+	"github.com/md-talim/dhara/internal/store"
 )
 
 type reaper struct {
@@ -33,7 +33,7 @@ func newReaper(
 		staleThreshold = 30 * time.Second
 	}
 	if reaperID == "" {
-		reaperID = "relay-reaper"
+		reaperID = "dhara-reaper"
 	}
 
 	return &reaper{

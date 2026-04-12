@@ -4,7 +4,7 @@ set -eu
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 DB_SERVICE="${DB_SERVICE:-test_db}"
-DATABASE_URL="${DATABASE_URL:-postgres://relay:relay@localhost:5433/relay_test?sslmode=disabl}"
+DATABASE_URL="${DATABASE_URL:-postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disabl}"
 
 echo "Starting test database container: ${DB_SERVICE}"
 docker compose -f "${COMPOSE_FILE}" up -d "${DB_SERVICE}"
@@ -15,7 +15,7 @@ SLEEP_SECS=1
 i=1
 
 while [ "$i" -le "$ATTEMPTS" ]; do
-    if docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" pg_isready -U relay -d relay_test >/dev/null 2>&1; then
+    if docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" pg_isready -U dhara -d dhara_test >/dev/null 2>&1; then
         echo "Database is ready."
         break
     fi

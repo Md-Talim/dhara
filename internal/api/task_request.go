@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/md-talim/relay/internal/store"
+	"github.com/md-talim/dhara/internal/store"
 )
 
 type createTaskRequest struct {

@@ -1,4 +1,4 @@
-module github.com/md-talim/relay
+module github.com/md-talim/dhara
 
 go 1.26.1
 

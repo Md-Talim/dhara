@@ -33,7 +33,7 @@ func RunMigrations(ctx context.Context, db *pgxpool.Pool, logger *slog.Logger, m
 	defer conn.Release()
 
 	// Session-level advisory lock
-	lockName := "relay:migrations"
+	lockName := "dhara:migrations"
 	logger.Debug("acquiring advisory lock", "lock_name", lockName)
 
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1, 0))", lockName); err != nil {

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/md-talim/relay/internal/store"
+	"github.com/md-talim/dhara/internal/store"
 )
 
 type TaskHandler struct {

@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/md-talim/relay/internal/ctxlog"
-	"github.com/md-talim/relay/internal/store"
-	"github.com/md-talim/relay/internal/tasks"
+	"github.com/md-talim/dhara/internal/ctxlog"
+	"github.com/md-talim/dhara/internal/store"
+	"github.com/md-talim/dhara/internal/tasks"
 )
 
 type Worker struct {

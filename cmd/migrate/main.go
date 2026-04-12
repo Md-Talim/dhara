@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/md-talim/relay/internal/db"
-	"github.com/md-talim/relay/internal/db/migrations"
+	"github.com/md-talim/dhara/internal/db"
+	"github.com/md-talim/dhara/internal/db/migrations"
 )
 
 func main() {

@@ -1,36 +1,36 @@
 services:
     db:
-        container_name: relay_db
+        container_name: dhara_db
         image: postgres:16-alpine
         restart: unless-stopped
         environment:
-            POSTGRES_DB: relay
-            POSTGRES_USER: relay
-            POSTGRES_PASSWORD: relay
+            POSTGRES_DB: dhara
+            POSTGRES_USER: dhara
+            POSTGRES_PASSWORD: dhara
         ports:
             - "5432:5432"
         volumes:
             - pgdata:/var/lib/postgresql/data
         healthcheck:
-            test: ["CMD-SHELL", "pg_isready -U relay -d relay"]
+            test: ["CMD-SHELL", "pg_isready -U dhara -d dhara"]
             interval: 5s
             timeout: 3s
             retries: 5
 
     test_db:
-        container_name: relay_db_test
+        container_name: dhara_db_test
         image: postgres:16-alpine
         restart: no
         environment:
-            POSTGRES_DB: relay_test
-            POSTGRES_USER: relay
-            POSTGRES_PASSWORD: relay
+            POSTGRES_DB: dhara_test
+            POSTGRES_USER: dhara
+            POSTGRES_PASSWORD: dhara
         ports:
             - "5433:5432"
         volumes:
             - pgdata_test:/var/lib/postgresql/data
         healthcheck:
-            test: ["CMD-SHELL", "pg_isready -U relay -d relay_test"]
+            test: ["CMD-SHELL", "pg_isready -U dhara -d dhara_test"]
             interval: 5s
             timeout: 3s
             retries: 5

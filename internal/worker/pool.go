@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/md-talim/relay/internal/store"
-	"github.com/md-talim/relay/internal/tasks"
+	"github.com/md-talim/dhara/internal/store"
+	"github.com/md-talim/dhara/internal/tasks"
 )
 
 type WorkerPool struct {
@@ -102,7 +102,7 @@ type Settings struct {
 
 func (s *Settings) normalize() {
 	if s.WorkerPrefix == "" {
-		s.WorkerPrefix = "relay-worker"
+		s.WorkerPrefix = "dhara-worker"
 	}
 	if s.Concurrency <= 0 {
 		s.Concurrency = 1

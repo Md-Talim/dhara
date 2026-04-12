@@ -1,6 +1,10 @@
-# Relay
+<p align="center">
+  <img src="assets/dhara-logo.png" alt="Dhara logo" style="max-width: 100%; width: 600px;" />
+</p>
 
-Relay is a Go-based distributed task queue built on PostgreSQL.
+# dhara
+
+Dhara is a Go-based distributed task queue built on PostgreSQL.
 
 It is an active work in progress. The current codebase focuses on the core task lifecycle:
 
@@ -11,7 +15,7 @@ It is an active work in progress. The current codebase focuses on the core task 
 - running schema migrations
 - exposing liveness and readiness endpoints
 
-The long-term goal is to evolve Relay into a production-ready distributed task queue with:
+The long-term goal is to evolve Dhara into a production-ready distributed task queue with:
 
 - reliable retries and backoff
 - heartbeats and stuck-task recovery
@@ -40,7 +44,7 @@ Some package names and structure may still change as the project matures.
 
 ## Project overview
 
-Relay uses PostgreSQL as the source of truth for task state.
+Dhara uses PostgreSQL as the source of truth for task state.
 
 ### Main components
 
@@ -103,7 +107,7 @@ To apply database migrations:
 go run ./cmd/migrate
 ```
 
-Make sure `RELAY_DATABASE_URL` is set.
+Make sure `Dhara_DATABASE_URL` is set.
 
 ## Running the server
 
@@ -113,7 +117,7 @@ go run ./cmd/server
 
 Environment:
 
-- `RELAY_DATABASE_URL` — PostgreSQL connection string
+- `Dhara_DATABASE_URL` — PostgreSQL connection string
 
 The server will:
 
@@ -135,7 +139,7 @@ These are intentionally simple and are meant to exercise the worker flow.
 
 ## Design goals
 
-Relay is being built with the following goals in mind:
+Dhara is being built with the following goals in mind:
 
 - correctness first
 - PostgreSQL as the durable queue backend

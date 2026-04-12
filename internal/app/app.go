@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/md-talim/relay/internal/api"
-	"github.com/md-talim/relay/internal/config"
-	"github.com/md-talim/relay/internal/db"
-	"github.com/md-talim/relay/internal/store"
-	"github.com/md-talim/relay/internal/tasks"
-	"github.com/md-talim/relay/internal/worker"
+	"github.com/md-talim/dhara/internal/api"
+	"github.com/md-talim/dhara/internal/config"
+	"github.com/md-talim/dhara/internal/db"
+	"github.com/md-talim/dhara/internal/store"
+	"github.com/md-talim/dhara/internal/tasks"
+	"github.com/md-talim/dhara/internal/worker"
 )
 
 type Application struct {

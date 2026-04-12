@@ -9,9 +9,9 @@ import (
 )
 
 func Open(ctx context.Context) (*pgxpool.Pool, error) {
-	dbURL := os.Getenv("RELAY_DATABASE_URL")
+	dbURL := os.Getenv("DHARA_DATABASE_URL")
 	if dbURL == "" {
-		return nil, errors.New("missing RELAY_DATABASE_URL")
+		return nil, errors.New("missing DHARA_DATABASE_URL")
 	}
 
 	pool, err := pgxpool.New(ctx, dbURL)

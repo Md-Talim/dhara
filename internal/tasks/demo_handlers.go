@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/md-talim/relay/internal/ctxlog"
+	"github.com/md-talim/dhara/internal/ctxlog"
 )
 
 func Echo(ctx context.Context, payload json.RawMessage) error {
