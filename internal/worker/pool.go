@@ -13,47 +13,31 @@ import (
 )
 
 type WorkerPool struct {
-	store        store.TaskStore
-	logger       *slog.Logger
-	pollInterval time.Duration
-
-	workerPrefix string
-	concurrency  int
+	store    store.TaskStore
+	logger   *slog.Logger
+	settings Settings
 
 	mu       sync.RWMutex
 	registry tasks.HandlerRegistry
-
-	started atomic.Bool
+	started  atomic.Bool
 }
 
 func NewWorkerPool(
 	store store.TaskStore,
 	registry tasks.HandlerRegistry,
 	logger *slog.Logger,
-	workerPrefix string,
-	concurrency int,
-	pollInterval time.Duration,
+	settings Settings,
 ) *WorkerPool {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if concurrency <= 0 {
-		concurrency = 1
-	}
-	if pollInterval <= 0 {
-		pollInterval = 250 * time.Millisecond
-	}
-	if workerPrefix == "" {
-		workerPrefix = "relay-worker"
-	}
+	settings.normalize()
 
 	return &WorkerPool{
-		store:        store,
-		logger:       logger.With("component", "worker_pool"),
-		registry:     registry,
-		pollInterval: pollInterval,
-		workerPrefix: workerPrefix,
-		concurrency:  concurrency,
+		store:    store,
+		logger:   logger.With("component", "worker_pool"),
+		registry: registry,
+		settings: settings,
 	}
 }
 
@@ -69,12 +53,12 @@ func (p *WorkerPool) Start(ctx context.Context) {
 
 	p.logger.Info(
 		"starting worker pool",
-		"concurrency", p.concurrency,
-		"poll_interval_ms", p.pollInterval.Microseconds(),
+		"concurrency", p.settings.Concurrency,
+		"poll_interval_ms", p.settings.PollInterval.Milliseconds(),
 	)
 
-	for i := 0; i < p.concurrency; i++ {
-		workerID := fmt.Sprintf("%s-%d", p.workerPrefix, i+1)
+	for i := 0; i < p.settings.Concurrency; i++ {
+		workerID := fmt.Sprintf("%s-%d", p.settings.WorkerPrefix, i+1)
 		w := p.newWorker(workerID)
 		go w.Start(ctx)
 	}
@@ -82,10 +66,51 @@ func (p *WorkerPool) Start(ctx context.Context) {
 
 func (p *WorkerPool) newWorker(workerID string) *Worker {
 	return &Worker{
-		workerID:     workerID,
-		store:        p.store,
-		logger:       p.logger.With("worker_id", workerID),
-		registry:     p.registry,
-		pollInterval: p.pollInterval,
+		workerID:          workerID,
+		store:             p.store,
+		logger:            p.logger.With("worker_id", workerID),
+		registry:          p.registry,
+		pollInterval:      p.settings.PollInterval,
+		heartbeatInterval: p.settings.HeartbeatInterval,
+		handlerTimeout:    p.settings.HandlerTimeout,
+		baseBackoff:       p.settings.BaseBackoff,
+		maxBackoff:        p.settings.MaxBackoff,
+	}
+}
+
+type Settings struct {
+	WorkerPrefix      string
+	PollInterval      time.Duration
+	Concurrency       int
+	HeartbeatInterval time.Duration
+	HandlerTimeout    time.Duration
+	BaseBackoff       time.Duration
+	MaxBackoff        time.Duration
+}
+
+func (s *Settings) normalize() {
+	if s.WorkerPrefix == "" {
+		s.WorkerPrefix = "relay-worker"
+	}
+	if s.Concurrency <= 0 {
+		s.Concurrency = 1
+	}
+	if s.PollInterval <= 0 {
+		s.PollInterval = 250 * time.Millisecond
+	}
+	if s.HeartbeatInterval <= 0 {
+		s.HeartbeatInterval = 30 * time.Second
+	}
+	if s.HandlerTimeout <= 0 {
+		s.HandlerTimeout = 5 * time.Minute
+	}
+	if s.BaseBackoff <= 0 {
+		s.BaseBackoff = 10 * time.Second
+	}
+	if s.MaxBackoff <= 0 {
+		s.MaxBackoff = 5 * time.Minute
+	}
+	if s.BaseBackoff > s.MaxBackoff {
+		s.BaseBackoff = s.MaxBackoff
 	}
 }

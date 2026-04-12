@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"time"
 
 	"github.com/md-talim/relay/internal/ctxlog"
@@ -14,11 +13,15 @@ import (
 )
 
 type Worker struct {
-	workerID     string
-	store        store.TaskStore
-	registry     tasks.HandlerRegistry
-	logger       *slog.Logger
-	pollInterval time.Duration
+	workerID          string
+	store             store.TaskStore
+	registry          tasks.HandlerRegistry
+	logger            *slog.Logger
+	pollInterval      time.Duration
+	heartbeatInterval time.Duration
+	handlerTimeout    time.Duration
+	baseBackoff       time.Duration
+	maxBackoff        time.Duration
 }
 
 func (w *Worker) Start(ctx context.Context) {
@@ -56,7 +59,7 @@ func (w *Worker) processNext(ctx context.Context) error {
 		return w.store.MarkDead(ctx, task.ID.String(), "no handler registered for type: "+task.Type, "no handler registered")
 	}
 
-	handlerCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	handlerCtx, cancel := context.WithTimeout(ctx, w.handlerTimeout)
 	defer cancel()
 
 	handlerCtx = ctxlog.WithLogger(handlerCtx, taskLogger)
@@ -79,7 +82,7 @@ func (w *Worker) startHeartbeat(heartbeatCtx context.Context, task *store.Task) 
 	taskLogger := w.taskLogger(task)
 
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(w.heartbeatInterval)
 		defer ticker.Stop()
 
 		select {
@@ -110,7 +113,10 @@ func (w *Worker) handleFailure(ctx context.Context, task *store.Task, err error)
 	}
 
 	// exponential backoff: 10s, 20s, 40s, 80s...
-	backoff := time.Duration(math.Pow(2, float64(task.Attempts-1))) * 10 * time.Second
+	backoff := w.baseBackoff * (1 << max(task.Attempts-1, 0))
+	if backoff > w.maxBackoff {
+		backoff = w.maxBackoff
+	}
 	nextRunAt := time.Now().Add(backoff)
 
 	taskLogger.Info("retrying task",

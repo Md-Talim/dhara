@@ -2,12 +2,14 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/md-talim/relay/internal/api"
+	"github.com/md-talim/relay/internal/config"
 	"github.com/md-talim/relay/internal/db"
 	"github.com/md-talim/relay/internal/store"
 	"github.com/md-talim/relay/internal/tasks"
@@ -23,14 +25,13 @@ type Application struct {
 	WorkerPool    *worker.WorkerPool
 }
 
-func NewApplication(start time.Time) (*Application, error) {
+func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	ctx := context.Background()
 
 	pool, err := db.Open(ctx)
 	if err != nil {
-		logger.Error("failed to create db pool", "err", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("failed to create db pool: %w", err)
 	}
 
 	taskStore := store.NewTaskStore(pool)
@@ -39,8 +40,18 @@ func NewApplication(start time.Time) (*Application, error) {
 	taskHandler := api.NewTaskHandler(taskStore, logger)
 
 	registry := tasks.NewDemoRegistry()
-	wp := worker.NewWorkerPool(taskStore, registry, logger, "relay-worker", 4, 250*time.Millisecond)
 
+	workerSettings := worker.Settings{
+		WorkerPrefix:      cfg.WorkerPrefix,
+		Concurrency:       cfg.WorkerCount,
+		PollInterval:      cfg.PollInterval,
+		HeartbeatInterval: cfg.HeartbeatInterval,
+		HandlerTimeout:    cfg.HandlerTimeout,
+		BaseBackoff:       cfg.BaseBackoff,
+		MaxBackoff:        cfg.MaxBackoff,
+	}
+
+	wp := worker.NewWorkerPool(taskStore, registry, logger, workerSettings)
 	healthHandler.IsWorkerReady = wp.Started
 
 	app := &Application{
