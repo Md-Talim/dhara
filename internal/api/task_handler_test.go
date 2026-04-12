@@ -172,14 +172,15 @@ func TestCreateTask_RunAtPast(t *testing.T) {
 }
 
 type fakeTaskStore struct {
-	createFn      func(ctx context.Context, task *store.Task) (bool, error)
-	getById       func(ctx context.Context, id string) (*store.Task, error)
-	cancelById    func(ctx context.Context, id string) (*store.Task, error)
-	claim         func(ctx context.Context, workerID string) (*store.Task, error)
-	heartbeat     func(ctx context.Context, taskID, workerID string) error
-	markCompleted func(ctx context.Context, taskID string) error
-	markPending   func(ctx context.Context, task *store.Task, lastError string, runAt time.Time) error
-	markDead      func(ctx context.Context, taskID, lastError string) error
+	createFn            func(ctx context.Context, task *store.Task) (bool, error)
+	getById             func(ctx context.Context, id string) (*store.Task, error)
+	cancelById          func(ctx context.Context, id string) (*store.Task, error)
+	claim               func(ctx context.Context, workerID string) (*store.Task, error)
+	heartbeat           func(ctx context.Context, taskID, workerID string) error
+	markCompleted       func(ctx context.Context, taskID string) error
+	markPending         func(ctx context.Context, task *store.Task, lastError string, runAt time.Time) error
+	markDead            func(ctx context.Context, taskID, lastError string) error
+	requeueStaleRunning func(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error)
 }
 
 func (f *fakeTaskStore) Create(ctx context.Context, task *store.Task) (bool, error) {
@@ -212,6 +213,10 @@ func (f *fakeTaskStore) MarkPending(ctx context.Context, task *store.Task, lastE
 
 func (f *fakeTaskStore) MarkDead(ctx context.Context, taskID, lastError, reason string) error {
 	return f.markDead(ctx, taskID, lastError)
+}
+
+func (f *fakeTaskStore) RequeueStaleRunning(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error) {
+	return f.requeueStaleRunning(ctx, staleThreshold, reaperID)
 }
 
 func newRequest(body string) *http.Request {

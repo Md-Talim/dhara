@@ -55,6 +55,7 @@ func (p *WorkerPool) Start(ctx context.Context) {
 		"starting worker pool",
 		"concurrency", p.settings.Concurrency,
 		"poll_interval_ms", p.settings.PollInterval.Milliseconds(),
+		"reaper_interval_ms", p.settings.ReaperInterval.Milliseconds(),
 	)
 
 	for i := 0; i < p.settings.Concurrency; i++ {
@@ -62,6 +63,15 @@ func (p *WorkerPool) Start(ctx context.Context) {
 		w := p.newWorker(workerID)
 		go w.Start(ctx)
 	}
+
+	reaperID := fmt.Sprintf("%s-reaper", p.settings.WorkerPrefix)
+	go newReaper(
+		p.store,
+		p.logger,
+		p.settings.ReaperInterval,
+		p.settings.StaleThreshold,
+		reaperID,
+	).start(ctx)
 }
 
 func (p *WorkerPool) newWorker(workerID string) *Worker {
@@ -86,6 +96,8 @@ type Settings struct {
 	HandlerTimeout    time.Duration
 	BaseBackoff       time.Duration
 	MaxBackoff        time.Duration
+	ReaperInterval    time.Duration
+	StaleThreshold    time.Duration
 }
 
 func (s *Settings) normalize() {
@@ -100,6 +112,12 @@ func (s *Settings) normalize() {
 	}
 	if s.HeartbeatInterval <= 0 {
 		s.HeartbeatInterval = 30 * time.Second
+	}
+	if s.ReaperInterval <= 0 {
+		s.ReaperInterval = 30 * time.Second
+	}
+	if s.StaleThreshold <= 0 {
+		s.StaleThreshold = 5 * time.Minute
 	}
 	if s.HandlerTimeout <= 0 {
 		s.HandlerTimeout = 5 * time.Minute

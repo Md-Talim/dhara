@@ -49,6 +49,8 @@ func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
 		HandlerTimeout:    cfg.HandlerTimeout,
 		BaseBackoff:       cfg.BaseBackoff,
 		MaxBackoff:        cfg.MaxBackoff,
+		ReaperInterval:    cfg.ReaperInterval,
+		StaleThreshold:    cfg.StuckThreshold,
 	}
 
 	wp := worker.NewWorkerPool(taskStore, registry, logger, workerSettings)

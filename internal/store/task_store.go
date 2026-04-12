@@ -45,6 +45,7 @@ type TaskStore interface {
 	MarkCompleted(ctx context.Context, taskID, workerID string, durationMS int64) error
 	MarkPending(ctx context.Context, task *Task, lastError string, runAt time.Time) error
 	MarkDead(ctx context.Context, taskID, lastError, reason string) error
+	RequeueStaleRunning(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error)
 }
 
 type PostgresTaskStore struct {
@@ -380,6 +381,111 @@ func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, tas
 	)
 
 	return task, err
+}
+
+func (ts *PostgresTaskStore) RequeueStaleRunning(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error) {
+	tx, err := ts.db.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	query := `
+		WITH stale AS (
+			SELECT id, attempts, max_retries, locked_by
+			FROM tasks
+			WHERE
+				status = 'RUNNING'
+				AND locked_at < (now() - $1::interval)
+			FOR UPDATE SKIP LOCKED
+		),
+		to_dead AS (
+			UPDATE tasks t
+			SET
+				status = 'DEAD',
+				last_error = 'reaped: stale heartbeat (max retries exhausted)',
+				locked_by = NULL,
+				locked_at = NULL,
+				updated_at = now()
+			FROM stale s
+			WHERE
+				t.id = s.id
+				AND s.attempts >= s.max_retries
+			RETURNING t.id, t.status, s.attempts, s.max_retries, s.locked_by
+		),
+		to_pending AS (
+			UPDATE tasks t
+			SET
+				status = 'PENDING',
+				last_error = 'reaped: stale heartbeat',
+				run_at = now(),
+				locked_by = NULL,
+				locked_at = NULL,
+				updated_at = now()
+			FROM stale s
+			WHERE
+				t.id = s.id
+				AND s.attempts < s.max_retries
+			RETURNING t.id, t.status, s.attempts, s.max_retries, s.locked_by
+		)
+		SELECT id, status, attempts, max_retries, COALESCE(locked_by, '')
+		FROM to_dead
+		UNION ALL
+		SELECT id, status, attempts, max_retries, COALESCE(locked_by, '')
+		FROM to_pending
+	`
+
+	rows, err := tx.Query(ctx, query, staleThreshold.String())
+	if err != nil {
+		return 0, fmt.Errorf("requeue stale running: %w", err)
+	}
+	defer rows.Close()
+
+	var changed int64
+	for rows.Next() {
+		var (
+			taskID     uuid.UUID
+			newStatus  string
+			attempts   int
+			maxRetries int
+			lockedBy   string
+		)
+		if err := rows.Scan(&taskID, &newStatus, &attempts, &maxRetries, &lockedBy); err != nil {
+			return 0, fmt.Errorf("scan reaped row: %w", err)
+		}
+
+		var msg string
+		switch newStatus {
+		case "PENDING":
+			msg = fmt.Sprintf(
+				"reaped by %s: stale heartbeat; previous worker=%s; attempt %d/%d requeued",
+				reaperID, lockedBy, attempts, maxRetries,
+			)
+		case "DEAD":
+			msg = fmt.Sprintf(
+				"reaped by %s: stale heartbeat; previous worker=%s; attempt exhausted (%d/%d)",
+				reaperID, lockedBy, attempts, maxRetries,
+			)
+		default:
+			msg = fmt.Sprintf("reaped by %s: stale heartbeat", reaperID)
+		}
+
+		if err := ts.insertLog(ctx, tx, taskID.String(), newStatus, msg); err != nil {
+			return 0, fmt.Errorf("insert reaper log: %w", err)
+		}
+
+		changed++
+	}
+
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate reaped rows: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit requeue stale running: %w", err)
+	}
+
+	return changed, nil
 }
 
 func (ts *PostgresTaskStore) insertLog(ctx context.Context, tx pgx.Tx, taskID, status, message string) error {
