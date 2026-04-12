@@ -1,7 +1,11 @@
-.PHONY: run migrate
+.PHONY: run test migrate
 
 run:
 	go run ./cmd/server
+
+test:
+	chmod +x ./run-tests.sh
+	./run-tests.sh
 
 db-up:
 	docker compose up db
