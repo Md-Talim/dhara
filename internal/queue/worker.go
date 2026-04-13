@@ -85,18 +85,20 @@ func (w *Worker) startHeartbeat(heartbeatCtx context.Context, task *store.Task) 
 		ticker := time.NewTicker(w.heartbeatInterval)
 		defer ticker.Stop()
 
-		select {
-		case <-heartbeatCtx.Done():
-			return
-		case <-ticker.C:
-			if err := w.store.Heartbeat(heartbeatCtx, task.ID.String(), w.workerID); err != nil {
-				if errors.Is(err, store.ErrTaskOwnershipLost) {
-					taskLogger.Warn("lost task ownership during heartbeat")
-				} else {
-					taskLogger.Warn("heartbeat failed", "err", err)
-				}
-				cancel()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
 				return
+			case <-ticker.C:
+				if err := w.store.Heartbeat(heartbeatCtx, task.ID.String(), w.workerID); err != nil {
+					if errors.Is(err, store.ErrTaskOwnershipLost) {
+						taskLogger.Warn("lost task ownership during heartbeat")
+					} else {
+						taskLogger.Warn("heartbeat failed", "err", err)
+					}
+					cancel()
+					return
+				}
 			}
 		}
 	}()
