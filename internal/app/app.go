@@ -11,9 +11,9 @@ import (
 	"github.com/md-talim/dhara/internal/api"
 	"github.com/md-talim/dhara/internal/config"
 	"github.com/md-talim/dhara/internal/db"
+	"github.com/md-talim/dhara/internal/queue"
 	"github.com/md-talim/dhara/internal/store"
 	"github.com/md-talim/dhara/internal/tasks"
-	"github.com/md-talim/dhara/internal/worker"
 )
 
 type Application struct {
@@ -22,7 +22,7 @@ type Application struct {
 	Logger        *slog.Logger
 	HealthHandler *api.HealthHandler
 	TaskHandler   *api.TaskHandler
-	WorkerPool    *worker.WorkerPool
+	WorkerPool    *queue.WorkerPool
 }
 
 func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
@@ -41,7 +41,7 @@ func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
 
 	registry := tasks.NewDemoRegistry()
 
-	workerSettings := worker.Settings{
+	workerSettings := queue.Settings{
 		WorkerPrefix:      cfg.WorkerPrefix,
 		Concurrency:       cfg.WorkerCount,
 		PollInterval:      cfg.PollInterval,
@@ -53,7 +53,7 @@ func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
 		StaleThreshold:    cfg.StuckThreshold,
 	}
 
-	wp := worker.NewWorkerPool(taskStore, registry, logger, workerSettings)
+	wp := queue.NewWorkerPool(taskStore, registry, logger, workerSettings)
 	healthHandler.IsWorkerReady = wp.Started
 
 	app := &Application{
