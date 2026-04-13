@@ -355,6 +355,13 @@ func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, lastError, re
 		return fmt.Errorf("mark dead: %w", err)
 	}
 
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO dead_letters(task_id, last_error)
+		VALUES ($1, $2)
+	`, taskID, lastError); err != nil {
+		return fmt.Errorf("insert dead letter: %w", err)
+	}
+
 	deadLogMessage := fmt.Sprintf("marked dead: %s", reason)
 	if err := ts.insertLog(ctx, tx, taskID, "DEAD", deadLogMessage); err != nil {
 		return fmt.Errorf("insert dead log: %w", err)
@@ -383,6 +390,9 @@ func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, tas
 	return task, err
 }
 
+// RequeueStaleRunning finds tasks that have been in RUNNING state with a locked_at timestamp older than the staleThreshold.
+// For each such task, if attempts >= max_retries, it marks the task as DEAD; otherwise, it resets it to PENDING for retry.
+// It returns the count of tasks that were requeued or marked dead.
 func (ts *PostgresTaskStore) RequeueStaleRunning(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error) {
 	tx, err := ts.db.Begin(ctx)
 	if err != nil {
@@ -412,6 +422,12 @@ func (ts *PostgresTaskStore) RequeueStaleRunning(ctx context.Context, staleThres
 				t.id = s.id
 				AND s.attempts >= s.max_retries
 			RETURNING t.id, t.status, s.attempts, s.max_retries, s.locked_by
+		),
+		insert_dead_letters AS (
+			INSERT INTO dead_letters(task_id, last_error)
+			SELECT id, last_error
+			FROM to_dead
+			RETURNING task_id
 		),
 		to_pending AS (
 			UPDATE tasks t
