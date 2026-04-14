@@ -55,6 +55,7 @@ type TaskStore interface {
 	MarkCompleted(ctx context.Context, taskID, workerID string, durationMS int64) error
 	MarkPending(ctx context.Context, task *Task, workerID, lastError string, runAt time.Time) error
 	MarkDead(ctx context.Context, taskID, workerID, lastError, reason string) error
+	RetryDead(ctx context.Context, taskID string) (*Task, error)
 	RequeueStaleRunning(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error)
 }
 
@@ -461,6 +462,66 @@ func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, workerID, las
 		return fmt.Errorf("commit dead: %w", err)
 	}
 	return nil
+}
+
+func (ts *PostgresTaskStore) RetryDead(ctx context.Context, taskID string) (*Task, error) {
+	tx, err := ts.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	updateQuery := `
+		UPDATE tasks
+		SET
+			status = 'PENDING',
+			attempts = 0,
+			run_at = now(),
+			locked_by = NULL,
+			locked_at = NULL,
+			started_at = NULL,
+			completed_at = NULL,
+			last_error = NULL,
+			updated_at = now()
+		WHERE id = $1 AND status = 'DEAD'
+		RETURNING id, type, idempotency_key, status, priority, attempts, max_retries,
+		          run_at, started_at, completed_at, last_error, created_at, updated_at
+	`
+
+	task := &Task{}
+	err = tx.QueryRow(ctx, updateQuery, taskID).Scan(
+		&task.ID, &task.Type, &task.IdempotencyKey, &task.Status, &task.Priority, &task.Attempts,
+		&task.MaxRetries, &task.RunAt, &task.StartedAt, &task.CompletedAt, &task.LastError, &task.CreatedAt, &task.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Determine whether the task doesn't exist or isn't DEAD.
+			existing, lookupErr := ts.GetById(ctx, taskID)
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			if existing == nil {
+				return nil, ErrTaskNotFound
+			}
+			return nil, ErrTaskNotDead
+		}
+		return nil, fmt.Errorf("retry dead task: %w", err)
+	}
+
+	// Remove from dead_letters since the task is being retried.
+	if _, err := tx.Exec(ctx, `DELETE FROM dead_letters WHERE task_id = $1`, taskID); err != nil {
+		return nil, fmt.Errorf("delete dead letter: %w", err)
+	}
+
+	if err := ts.insertLog(ctx, tx, taskID, "PENDING", "manual retry requested"); err != nil {
+		return nil, fmt.Errorf("insert retry log: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit retry dead: %w", err)
+	}
+
+	return task, nil
 }
 
 func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, taskType, idempotencyKey string) (*Task, error) {

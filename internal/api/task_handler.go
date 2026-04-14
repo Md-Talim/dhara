@@ -167,3 +167,28 @@ func (h *TaskHandler) HandleDeleteTask(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, newTaskResponse(task))
 	}
 }
+
+func (h *TaskHandler) HandleRetryDeadTask(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid task id")
+		return
+	}
+
+	task, err := h.taskStore.RetryDead(r.Context(), id.String())
+	if err != nil {
+		if errors.Is(err, store.ErrTaskNotFound) {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		if errors.Is(err, store.ErrTaskNotDead) {
+			writeError(w, http.StatusConflict, "task is not in DEAD status")
+			return
+		}
+		h.logger.Error("failed to retry dead task", "err", err, "task_id", id)
+		writeError(w, http.StatusInternalServerError, "failed to retry task")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, newTaskResponse(task))
+}

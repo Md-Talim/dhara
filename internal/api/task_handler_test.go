@@ -181,6 +181,7 @@ type fakeTaskStore struct {
 	markCompleted       func(ctx context.Context, taskID string) error
 	markPending         func(ctx context.Context, task *store.Task, lastError string, runAt time.Time) error
 	markDead            func(ctx context.Context, taskID, workerID, lastError string) error
+	retryDead           func(ctx context.Context, taskID string) (*store.Task, error)
 	requeueStaleRunning func(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error)
 }
 
@@ -221,6 +222,13 @@ func (f *fakeTaskStore) MarkPending(ctx context.Context, task *store.Task, worke
 
 func (f *fakeTaskStore) MarkDead(ctx context.Context, taskID, workerID, lastError, reason string) error {
 	return f.markDead(ctx, taskID, workerID, lastError)
+}
+
+func (f *fakeTaskStore) RetryDead(ctx context.Context, taskID string) (*store.Task, error) {
+	if f.retryDead != nil {
+		return f.retryDead(ctx, taskID)
+	}
+	return nil, nil
 }
 
 func (f *fakeTaskStore) RequeueStaleRunning(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error) {
