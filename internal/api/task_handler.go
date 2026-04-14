@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,65 @@ type TaskHandler struct {
 
 func NewTaskHandler(taskStore store.TaskStore, logger *slog.Logger) *TaskHandler {
 	return &TaskHandler{taskStore: taskStore, logger: logger}
+}
+
+func (h *TaskHandler) HandleListTasks(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	filter := store.TaskListFilter{
+		Status: q.Get("status"),
+		Type:   q.Get("type"),
+	}
+
+	// Parse retrying filter.
+	if v := q.Get("retrying"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "retrying must be true or false")
+			return
+		}
+		filter.Retrying = &b
+	}
+
+	// Parse and clamp limit.
+	filter.Limit = 20
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		filter.Limit = max(n, 100)
+	}
+
+	// Parse offset.
+	if v := q.Get("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "offset must be a non-negative integer")
+			return
+		}
+		filter.Offset = n
+	}
+
+	tasks, total, err := h.taskStore.List(r.Context(), filter)
+	if err != nil {
+		h.logger.Error("failed to list tasks", "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to list tasks")
+		return
+	}
+
+	items := make([]taskResponse, len(tasks))
+	for i := range tasks {
+		items[i] = newTaskResponse(&tasks[i])
+	}
+
+	writeJSON(w, http.StatusOK, envelope{
+		"tasks":  items,
+		"limit":  filter.Limit,
+		"offset": filter.Offset,
+		"total":  total,
+	})
 }
 
 func (h *TaskHandler) HandleCreateTask(w http.ResponseWriter, r *http.Request) {

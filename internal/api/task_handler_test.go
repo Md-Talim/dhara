@@ -174,6 +174,7 @@ func TestCreateTask_RunAtPast(t *testing.T) {
 type fakeTaskStore struct {
 	createFn            func(ctx context.Context, task *store.Task) (bool, error)
 	getById             func(ctx context.Context, id string) (*store.Task, error)
+	listFn              func(ctx context.Context, filter store.TaskListFilter) (tasks []store.Task, total int, err error)
 	cancelById          func(ctx context.Context, id string) (*store.Task, error)
 	claim               func(ctx context.Context, workerID string) (*store.Task, error)
 	heartbeat           func(ctx context.Context, taskID, workerID string) error
@@ -189,6 +190,13 @@ func (f *fakeTaskStore) Create(ctx context.Context, task *store.Task) (bool, err
 
 func (f *fakeTaskStore) GetById(ctx context.Context, id string) (*store.Task, error) {
 	return f.getById(ctx, id)
+}
+
+func (f *fakeTaskStore) List(ctx context.Context, filter store.TaskListFilter) ([]store.Task, int, error) {
+	if f.listFn != nil {
+		return f.listFn(ctx, filter)
+	}
+	return nil, 0, nil
 }
 
 func (f *fakeTaskStore) Cancel(ctx context.Context, id string) (*store.Task, error) {

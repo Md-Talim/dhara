@@ -36,9 +36,19 @@ type Task struct {
 	UpdatedAt      time.Time
 }
 
+// TaskListFilter holds the optional filters and pagination for listing tasks.
+type TaskListFilter struct {
+	Status   string
+	Type     string
+	Retrying *bool
+	Limit    int
+	Offset   int
+}
+
 type TaskStore interface {
 	Create(ctx context.Context, task *Task) (bool, error)
 	GetById(ctx context.Context, id string) (*Task, error)
+	List(ctx context.Context, filter TaskListFilter) (tasks []Task, total int, err error)
 	Cancel(ctx context.Context, id string) (*Task, error)
 	Claim(ctx context.Context, workerID string) (*Task, error)
 	Heartbeat(ctx context.Context, taskID, workerID string) error
@@ -123,6 +133,80 @@ func (ts *PostgresTaskStore) GetById(ctx context.Context, id string) (*Task, err
 	}
 
 	return task, nil
+}
+
+func (ts *PostgresTaskStore) List(ctx context.Context, filter TaskListFilter) ([]Task, int, error) {
+	// Build dynamic WHERE clauses.
+	var whereClauses []string
+	var args []any
+	argIdx := 1
+
+	if filter.Status != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("status = $%d", argIdx))
+		args = append(args, filter.Status)
+		argIdx++
+	}
+
+	if filter.Type != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("type = $%d", argIdx))
+		args = append(args, filter.Type)
+		argIdx++
+	}
+
+	if filter.Retrying != nil && *filter.Retrying {
+		whereClauses = append(whereClauses, "status = 'PENDING'", "attempts > 0")
+	}
+
+	whereSQL := ""
+	if len(whereClauses) > 0 {
+		whereSQL = "WHERE " + whereClauses[0]
+		for _, c := range whereClauses[1:] {
+			whereSQL += " AND " + c
+		}
+	}
+
+	// Count total matching rows.
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM tasks %s", whereSQL)
+	var total int
+	if err := ts.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count tasks: %w", err)
+	}
+
+	// Fetch paginated results (never include payload).
+	selectQuery := fmt.Sprintf(`
+	SELECT
+		id, type, idempotency_key, status, priority, attempts, max_retries,
+		run_at, started_at, completed_at, last_error, created_at, updated_at
+	FROM tasks %s
+	ORDER BY created_at DESC
+	LIMIT $%d OFFSET $%d
+	`, whereSQL, argIdx, argIdx+1)
+
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := ts.db.Query(ctx, selectQuery, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []Task
+	for rows.Next() {
+		var t Task
+		if err := rows.Scan(
+			&t.ID, &t.Type, &t.IdempotencyKey, &t.Status, &t.Priority, &t.Attempts,
+			&t.MaxRetries, &t.RunAt, &t.StartedAt, &t.CompletedAt, &t.LastError, &t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan task row: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate task rows: %w", err)
+	}
+
+	return tasks, total, nil
 }
 
 func (ts *PostgresTaskStore) Cancel(ctx context.Context, id string) (*Task, error) {
