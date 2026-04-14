@@ -56,7 +56,7 @@ func (w *Worker) processNext(ctx context.Context) error {
 	handler, ok := w.registry.Get(task.Type)
 	if !ok {
 		taskLogger.Warn("no handler registered for task type")
-		return w.store.MarkDead(ctx, task.ID.String(), "no handler registered for type: "+task.Type, "no handler registered")
+		return w.store.MarkDead(ctx, task.ID.String(), w.workerID, "no handler registered for type: "+task.Type, "no handler registered")
 	}
 
 	handlerCtx, cancel := context.WithTimeout(ctx, w.handlerTimeout)
@@ -111,7 +111,7 @@ func (w *Worker) handleFailure(ctx context.Context, task *store.Task, err error)
 	taskLogger.Warn("task failed", "err", err)
 
 	if task.Attempts >= task.MaxRetries {
-		return w.store.MarkDead(ctx, task.ID.String(), err.Error(), "all attempts exhausted")
+		return w.store.MarkDead(ctx, task.ID.String(), w.workerID, err.Error(), "all attempts exhausted")
 	}
 
 	// exponential backoff: 10s, 20s, 40s, 80s...
@@ -126,7 +126,7 @@ func (w *Worker) handleFailure(ctx context.Context, task *store.Task, err error)
 		"backoff_ms", backoff.Milliseconds(),
 	)
 
-	return w.store.MarkPending(ctx, task, err.Error(), nextRunAt)
+	return w.store.MarkPending(ctx, task, w.workerID, err.Error(), nextRunAt)
 }
 
 func (w *Worker) taskLogger(task *store.Task) *slog.Logger {

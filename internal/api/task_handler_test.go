@@ -179,7 +179,7 @@ type fakeTaskStore struct {
 	heartbeat           func(ctx context.Context, taskID, workerID string) error
 	markCompleted       func(ctx context.Context, taskID string) error
 	markPending         func(ctx context.Context, task *store.Task, lastError string, runAt time.Time) error
-	markDead            func(ctx context.Context, taskID, lastError string) error
+	markDead            func(ctx context.Context, taskID, workerID, lastError string) error
 	requeueStaleRunning func(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error)
 }
 
@@ -207,12 +207,12 @@ func (f *fakeTaskStore) MarkCompleted(ctx context.Context, taskID, workerID stri
 	return f.markCompleted(ctx, taskID)
 }
 
-func (f *fakeTaskStore) MarkPending(ctx context.Context, task *store.Task, lastError string, runAt time.Time) error {
+func (f *fakeTaskStore) MarkPending(ctx context.Context, task *store.Task, workerID, lastError string, runAt time.Time) error {
 	return f.markPending(ctx, task, lastError, runAt)
 }
 
-func (f *fakeTaskStore) MarkDead(ctx context.Context, taskID, lastError, reason string) error {
-	return f.markDead(ctx, taskID, lastError)
+func (f *fakeTaskStore) MarkDead(ctx context.Context, taskID, workerID, lastError, reason string) error {
+	return f.markDead(ctx, taskID, workerID, lastError)
 }
 
 func (f *fakeTaskStore) RequeueStaleRunning(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error) {

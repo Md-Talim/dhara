@@ -43,8 +43,8 @@ type TaskStore interface {
 	Claim(ctx context.Context, workerID string) (*Task, error)
 	Heartbeat(ctx context.Context, taskID, workerID string) error
 	MarkCompleted(ctx context.Context, taskID, workerID string, durationMS int64) error
-	MarkPending(ctx context.Context, task *Task, lastError string, runAt time.Time) error
-	MarkDead(ctx context.Context, taskID, lastError, reason string) error
+	MarkPending(ctx context.Context, task *Task, workerID, lastError string, runAt time.Time) error
+	MarkDead(ctx context.Context, taskID, workerID, lastError, reason string) error
 	RequeueStaleRunning(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error)
 }
 
@@ -260,12 +260,14 @@ func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID, workerID
 			locked_by = NULL,
 			locked_at = NULL,
 			updated_at = now()
-		WHERE id = $1 AND status = 'RUNNING'
+		WHERE id = $1
+			AND status = 'RUNNING'
+			AND locked_by = $2
 		RETURNING id
 	`
 
 	var id uuid.UUID
-	if err := tx.QueryRow(ctx, updateQuery, taskID).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, updateQuery, taskID, workerID).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrTaskNotFound
 		}
@@ -284,7 +286,7 @@ func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID, workerID
 	return nil
 }
 
-func (ts *PostgresTaskStore) MarkPending(ctx context.Context, task *Task, lastError string, nextRunAt time.Time) error {
+func (ts *PostgresTaskStore) MarkPending(ctx context.Context, task *Task, workerID, lastError string, nextRunAt time.Time) error {
 	tx, err := ts.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -295,17 +297,19 @@ func (ts *PostgresTaskStore) MarkPending(ctx context.Context, task *Task, lastEr
 		UPDATE tasks
 		SET
 			status = 'PENDING',
-			last_error = $2,
-			run_at = $3,
+			last_error = $3,
+			run_at = $4,
 			locked_by = NULL,
 			locked_at = NULL,
 			updated_at = now()
-		WHERE id = $1 AND status = 'RUNNING'
+		WHERE id = $1
+			AND status = 'RUNNING'
+			AND locked_by = $2
 		RETURNING id
 	`
 
 	var id uuid.UUID
-	if err := tx.QueryRow(ctx, query, task.ID, lastError, nextRunAt).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, query, task.ID, workerID, lastError, nextRunAt).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrTaskNotFound
 		}
@@ -328,7 +332,7 @@ func (ts *PostgresTaskStore) MarkPending(ctx context.Context, task *Task, lastEr
 	return nil
 }
 
-func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, lastError, reason string) error {
+func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, workerID, lastError, reason string) error {
 	tx, err := ts.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -339,16 +343,18 @@ func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, lastError, re
 		UPDATE tasks
 		SET
 			status = 'DEAD',
-			last_error = $2,
+			last_error = $3,
 			locked_by = NULL,
 			locked_at = NULL,
 			updated_at = now()
-		WHERE id = $1 AND status = 'RUNNING'
+		WHERE id = $1
+			AND status = 'RUNNING'
+			AND locked_by = $2
 		RETURNING id
 	`
 
 	var id uuid.UUID
-	if err := tx.QueryRow(ctx, updateQuery, taskID, lastError).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, updateQuery, taskID, workerID, lastError).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrTaskNotFound
 		}
