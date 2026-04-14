@@ -74,9 +74,9 @@ func (ts *PostgresTaskStore) Create(ctx context.Context, task *Task) (bool, erro
 	}
 
 	query := `
-	INSERT INTO tasks(type, payload, payload_hash, idempotency_key,  priority, max_retries, run_at)
-	VALUES($1, $2, $3, $4, $5, $6, $7)
-	RETURNING id, status, attempts, created_at, updated_at
+		INSERT INTO tasks(type, payload, payload_hash, idempotency_key,  priority, max_retries, run_at)
+		VALUES($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, status, attempts, created_at, updated_at
 	`
 
 	err = ts.db.QueryRow(
@@ -115,10 +115,10 @@ func (ts *PostgresTaskStore) Create(ctx context.Context, task *Task) (bool, erro
 
 func (ts *PostgresTaskStore) GetById(ctx context.Context, id string) (*Task, error) {
 	query := `
-	SELECT
-		id, type, payload, idempotency_key, status, priority, attempts, max_retries,
-		run_at, started_at, completed_at, last_error, created_at, updated_at
-    FROM tasks WHERE id = $1
+		SELECT
+			id, type, payload, idempotency_key, status, priority, attempts, max_retries,
+			run_at, started_at, completed_at, last_error, created_at, updated_at
+	    FROM tasks WHERE id = $1
 	`
 
 	task := &Task{}
@@ -175,12 +175,12 @@ func (ts *PostgresTaskStore) List(ctx context.Context, filter TaskListFilter) ([
 
 	// Fetch paginated results (never include payload).
 	selectQuery := fmt.Sprintf(`
-	SELECT
-		id, type, idempotency_key, status, priority, attempts, max_retries,
-		run_at, started_at, completed_at, last_error, created_at, updated_at
-	FROM tasks %s
-	ORDER BY created_at DESC
-	LIMIT $%d OFFSET $%d
+		SELECT
+			id, type, idempotency_key, status, priority, attempts, max_retries,
+			run_at, started_at, completed_at, last_error, created_at, updated_at
+		FROM tasks %s
+		ORDER BY created_at DESC
+		LIMIT $%d OFFSET $%d
 	`, whereSQL, argIdx, argIdx+1)
 
 	args = append(args, filter.Limit, filter.Offset)
@@ -524,23 +524,6 @@ func (ts *PostgresTaskStore) RetryDead(ctx context.Context, taskID string) (*Tas
 	return task, nil
 }
 
-func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, taskType, idempotencyKey string) (*Task, error) {
-	query := `
-	SELECT
-		id, type, payload, payload_hash, idempotency_key, status, priority, attempts, max_retries,
-		run_at, started_at, completed_at, last_error, created_at, updated_at
-    FROM tasks WHERE type = $1 AND idempotency_key = $2
-	`
-
-	task := &Task{}
-	err := ts.db.QueryRow(ctx, query, taskType, idempotencyKey).Scan(
-		&task.ID, &task.Type, &task.Payload, &task.PayloadHash, &task.IdempotencyKey, &task.Status, &task.Priority, &task.Attempts,
-		&task.MaxRetries, &task.RunAt, &task.StartedAt, &task.CompletedAt, &task.LastError, &task.CreatedAt, &task.UpdatedAt,
-	)
-
-	return task, err
-}
-
 // RequeueStaleRunning finds tasks that have been in RUNNING state with a locked_at timestamp older than the staleThreshold.
 // For each such task, if attempts >= max_retries, it marks the task as DEAD; otherwise, it resets it to PENDING for retry.
 // It returns the count of tasks that were requeued or marked dead.
@@ -653,6 +636,23 @@ func (ts *PostgresTaskStore) RequeueStaleRunning(ctx context.Context, staleThres
 	}
 
 	return changed, nil
+}
+
+func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, taskType, idempotencyKey string) (*Task, error) {
+	query := `
+		SELECT
+			id, type, payload, payload_hash, idempotency_key, status, priority, attempts, max_retries,
+			run_at, started_at, completed_at, last_error, created_at, updated_at
+	    FROM tasks WHERE type = $1 AND idempotency_key = $2
+	`
+
+	task := &Task{}
+	err := ts.db.QueryRow(ctx, query, taskType, idempotencyKey).Scan(
+		&task.ID, &task.Type, &task.Payload, &task.PayloadHash, &task.IdempotencyKey, &task.Status, &task.Priority, &task.Attempts,
+		&task.MaxRetries, &task.RunAt, &task.StartedAt, &task.CompletedAt, &task.LastError, &task.CreatedAt, &task.UpdatedAt,
+	)
+
+	return task, err
 }
 
 func (ts *PostgresTaskStore) insertLog(ctx context.Context, tx pgx.Tx, taskID, status, message string) error {
