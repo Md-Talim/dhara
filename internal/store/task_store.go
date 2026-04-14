@@ -183,11 +183,11 @@ func (ts *PostgresTaskStore) Claim(ctx context.Context, workerID string) (*Task,
 	claimQuery := `
 		UPDATE tasks
 		SET
-			status = 'RUNNING'
-			locked_by = $1
-			locked_at = now()
-			started_at = now()
-			attempts = attempts + 1
+			status = 'RUNNING',
+			locked_by = $1,
+			locked_at = now(),
+			started_at = now(),
+			attempts = attempts + 1,
 			updated_at = now()
 		WHERE id = (
 			SELECT id FROM tasks
@@ -427,7 +427,7 @@ func (ts *PostgresTaskStore) RequeueStaleRunning(ctx context.Context, staleThres
 			WHERE
 				t.id = s.id
 				AND s.attempts >= s.max_retries
-			RETURNING t.id, t.status, s.attempts, s.max_retries, s.locked_by
+			RETURNING t.id, t.status, t.last_error, s.attempts, s.max_retries, s.locked_by
 		),
 		insert_dead_letters AS (
 			INSERT INTO dead_letters(task_id, last_error)
