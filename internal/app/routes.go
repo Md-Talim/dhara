@@ -17,5 +17,7 @@ func (app *Application) SetupRoutes() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/v1/tasks/{id}", app.TaskHandler.HandleDeleteTask)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", app.TaskHandler.HandleRetryDeadTask)
 
+	mux.Handle("GET /api/v1/metrics", app.MetricsHandler)
+
 	return mux
 }

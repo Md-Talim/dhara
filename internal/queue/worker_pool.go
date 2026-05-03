@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/store"
 	"github.com/md-talim/dhara/internal/tasks"
 )
@@ -20,6 +21,8 @@ type WorkerPool struct {
 	mu       sync.RWMutex
 	registry tasks.HandlerRegistry
 	started  atomic.Bool
+
+	metrics *metrics.Metrics
 }
 
 func NewWorkerPool(
@@ -27,6 +30,7 @@ func NewWorkerPool(
 	registry tasks.HandlerRegistry,
 	logger *slog.Logger,
 	settings Settings,
+	m *metrics.Metrics,
 ) *WorkerPool {
 	if logger == nil {
 		logger = slog.Default()
@@ -38,6 +42,7 @@ func NewWorkerPool(
 		logger:   logger.With("component", "worker_pool"),
 		registry: registry,
 		settings: settings,
+		metrics:  m,
 	}
 }
 
@@ -79,6 +84,7 @@ func (p *WorkerPool) newWorker(workerID string) *Worker {
 		workerID:          workerID,
 		store:             p.store,
 		logger:            p.logger.With("worker_id", workerID),
+		metrics:           p.metrics,
 		registry:          p.registry,
 		pollInterval:      p.settings.PollInterval,
 		heartbeatInterval: p.settings.HeartbeatInterval,

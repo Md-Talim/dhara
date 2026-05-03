@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/md-talim/dhara/internal/metrics"
 )
 
 var pgErrUniqueViolation = "23505"
@@ -60,11 +61,15 @@ type TaskStore interface {
 }
 
 type PostgresTaskStore struct {
-	db *pgxpool.Pool
+	db      *pgxpool.Pool
+	metrics *metrics.Metrics
 }
 
-func NewTaskStore(db *pgxpool.Pool) *PostgresTaskStore {
-	return &PostgresTaskStore{db: db}
+func NewTaskStore(db *pgxpool.Pool, m *metrics.Metrics) *PostgresTaskStore {
+	return &PostgresTaskStore{
+		db:      db,
+		metrics: m,
+	}
 }
 
 func (ts *PostgresTaskStore) Create(ctx context.Context, task *Task) (bool, error) {
@@ -110,6 +115,7 @@ func (ts *PostgresTaskStore) Create(ctx context.Context, task *Task) (bool, erro
 		return false, err
 	}
 
+	ts.metrics.TasksEnqueuedTotal.Add(1)
 	return true, nil
 }
 
@@ -255,6 +261,7 @@ func (ts *PostgresTaskStore) Cancel(ctx context.Context, id string) (*Task, erro
 		return nil, fmt.Errorf("commit cancel: %w", err)
 	}
 
+	ts.metrics.TasksCanceledTotal.Add(1)
 	return task, nil
 }
 
@@ -368,6 +375,7 @@ func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID, workerID
 		return fmt.Errorf("commit complete: %w", err)
 	}
 
+	ts.metrics.TasksCompletedTotal.Add(1)
 	return nil
 }
 
@@ -414,6 +422,8 @@ func (ts *PostgresTaskStore) MarkPending(ctx context.Context, task *Task, worker
 		return fmt.Errorf("commit pending: %w", err)
 	}
 
+	ts.metrics.TaskAttemptFailuresTotal.Add(1)
+	ts.metrics.TasksRetriedTotal.Add(1)
 	return nil
 }
 
@@ -461,6 +471,8 @@ func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, workerID, las
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit dead: %w", err)
 	}
+
+	ts.metrics.TasksDeadTotal.Add(1)
 	return nil
 }
 
@@ -635,7 +647,38 @@ func (ts *PostgresTaskStore) RequeueStaleRunning(ctx context.Context, staleThres
 		return 0, fmt.Errorf("commit requeue stale running: %w", err)
 	}
 
+	ts.metrics.TasksReapedTotal.Add(changed)
 	return changed, nil
+}
+
+func (ts *PostgresTaskStore) GetQueueDBMetrics(ctx context.Context) (*QueueDBMetrics, error) {
+	query := `
+		SELECT
+			COUNT(*) FILTER (WHERE status = 'PENDING') AS pending,
+			COUNT(*) FILTER (WHERE status = 'RUNNING') AS running,
+			COUNT(*) FILTER (WHERE status = 'COMPLETED') AS completed,
+			COUNT(*) FILTER (WHERE status = 'CANCELED') AS canceled,
+			COUNT(*) FILTER (WHERE status = 'DEAD') AS dead,
+			COUNT(*) FILTER (WHERE status = 'PENDING' AND run_at <= now()) AS pending_ready,
+			COUNT(*) FILTER (WHERE status = 'PENDING' AND run_at > now()) AS pending_delayed
+		FROM tasks
+	`
+
+	metrics := &QueueDBMetrics{}
+	err := ts.db.QueryRow(ctx, query).Scan(
+		&metrics.TasksPending,
+		&metrics.TasksRunning,
+		&metrics.TasksCompleted,
+		&metrics.TasksCanceled,
+		&metrics.TasksDead,
+		&metrics.TasksPendingReady,
+		&metrics.TasksPendingDelayed,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get queue db metrics: %w", err)
+	}
+
+	return metrics, nil
 }
 
 func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, taskType, idempotencyKey string) (*Task, error) {

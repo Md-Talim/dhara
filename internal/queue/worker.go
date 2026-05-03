@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/md-talim/dhara/internal/ctxlog"
+	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/store"
 	"github.com/md-talim/dhara/internal/tasks"
 )
@@ -17,6 +18,7 @@ type Worker struct {
 	store             store.TaskStore
 	registry          tasks.HandlerRegistry
 	logger            *slog.Logger
+	metrics           *metrics.Metrics
 	pollInterval      time.Duration
 	heartbeatInterval time.Duration
 	handlerTimeout    time.Duration
@@ -25,6 +27,9 @@ type Worker struct {
 }
 
 func (w *Worker) Start(ctx context.Context) {
+	w.metrics.WorkersTotal.Add(1)
+	defer w.metrics.WorkersTotal.Add(-1)
+
 	ticker := time.NewTicker(w.pollInterval)
 	defer ticker.Stop()
 
@@ -66,6 +71,9 @@ func (w *Worker) processNext(ctx context.Context) error {
 
 	stopHeartbeat := w.startHeartbeat(handlerCtx, task)
 	defer stopHeartbeat()
+
+	w.metrics.WorkersInflight.Add(1)
+	defer w.metrics.WorkersInflight.Add(-1)
 
 	taskStartTime := time.Now()
 	if err = handler(handlerCtx, task.Payload); err != nil {

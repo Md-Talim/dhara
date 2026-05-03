@@ -11,18 +11,20 @@ import (
 	"github.com/md-talim/dhara/internal/api"
 	"github.com/md-talim/dhara/internal/config"
 	"github.com/md-talim/dhara/internal/db"
+	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/queue"
 	"github.com/md-talim/dhara/internal/store"
 	"github.com/md-talim/dhara/internal/tasks"
 )
 
 type Application struct {
-	DB            *pgxpool.Pool
-	Start         time.Time
-	Logger        *slog.Logger
-	HealthHandler *api.HealthHandler
-	TaskHandler   *api.TaskHandler
-	WorkerPool    *queue.WorkerPool
+	DB             *pgxpool.Pool
+	Start          time.Time
+	Logger         *slog.Logger
+	HealthHandler  *api.HealthHandler
+	TaskHandler    *api.TaskHandler
+	MetricsHandler *api.MetricsHandler
+	WorkerPool     *queue.WorkerPool
 }
 
 func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
@@ -34,10 +36,13 @@ func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
 		return nil, fmt.Errorf("failed to create db pool: %w", err)
 	}
 
-	taskStore := store.NewTaskStore(pool)
+	m := metrics.New()
+
+	taskStore := store.NewTaskStore(pool, m)
 
 	healthHandler := api.NewHealthHandler(start, pool)
 	taskHandler := api.NewTaskHandler(taskStore, logger)
+	metricsHandler := api.NewMetricsHandler(taskStore, m)
 
 	registry := tasks.NewDemoRegistry()
 
@@ -53,16 +58,17 @@ func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
 		StaleThreshold:    cfg.StuckThreshold,
 	}
 
-	wp := queue.NewWorkerPool(taskStore, registry, logger, workerSettings)
+	wp := queue.NewWorkerPool(taskStore, registry, logger, workerSettings, m)
 	healthHandler.IsWorkerReady = wp.Started
 
 	app := &Application{
-		DB:            pool,
-		Start:         start,
-		Logger:        logger,
-		HealthHandler: healthHandler,
-		TaskHandler:   taskHandler,
-		WorkerPool:    wp,
+		DB:             pool,
+		Start:          start,
+		Logger:         logger,
+		HealthHandler:  healthHandler,
+		TaskHandler:    taskHandler,
+		MetricsHandler: metricsHandler,
+		WorkerPool:     wp,
 	}
 
 	return app, nil
