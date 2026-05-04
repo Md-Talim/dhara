@@ -33,11 +33,6 @@ func run() int {
 		logger.Error("failed to build application", "err", err)
 		return 1
 	}
-	defer func() {
-		if err := application.Shutdown(context.Background()); err != nil {
-			logger.Error("application shutdown failed", "err", err)
-		}
-	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
