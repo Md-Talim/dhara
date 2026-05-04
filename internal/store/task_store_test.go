@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/md-talim/dhara/internal/db"
 	"github.com/md-talim/dhara/internal/db/migrations"
+	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/store"
 )
 
@@ -27,7 +28,7 @@ func TestMain(m *testing.M) {
 		log.Fatalf("failed to setup test db: %v", err)
 	}
 
-	testStore = store.NewTaskStore(db)
+	testStore = store.NewTaskStore(db, metrics.New())
 	testDB = db
 
 	code := m.Run()

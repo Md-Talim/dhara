@@ -14,29 +14,31 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	start := time.Now()
 
 	cfg, err := config.NewFromEnv()
 	if err != nil {
-		panic(err)
+		return fail(err)
 	}
 
 	application, err := app.NewApplication(start, cfg)
 	if err != nil {
-		panic(err)
+		return fail(err)
 	}
-	defer application.DB.Close()
+	defer application.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	application.WorkerPool.Start(ctx)
 
-	routes := application.SetupRoutes()
-
 	server := &http.Server{
 		Addr:              ":" + strconv.Itoa(cfg.Port),
-		Handler:           routes,
+		Handler:           application.SetupRoutes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -44,7 +46,7 @@ func main() {
 		application.Logger.Info("http server starting", "addr", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			application.Logger.Error("http server failed", "err", err)
-			os.Exit(1)
+			stop()
 		}
 	}()
 
@@ -57,8 +59,14 @@ func main() {
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		application.Logger.Error("http shutdown failed", "err", err)
-		os.Exit(1)
+		return 1
 	}
 
 	application.Logger.Info("server stopped")
+	return 0
+}
+
+func fail(err error) int {
+	os.Stderr.WriteString(err.Error() + "\n")
+	return 1
 }

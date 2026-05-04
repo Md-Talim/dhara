@@ -73,3 +73,9 @@ func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
 
 	return app, nil
 }
+
+func (a *Application) Close() {
+	if a.DB != nil {
+		a.DB.Close()
+	}
+}
