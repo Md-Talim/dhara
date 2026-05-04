@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
+	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,26 +18,25 @@ import (
 )
 
 type Application struct {
-	DB             *pgxpool.Pool
-	Start          time.Time
-	Logger         *slog.Logger
-	HealthHandler  *api.HealthHandler
-	TaskHandler    *api.TaskHandler
-	MetricsHandler *api.MetricsHandler
-	WorkerPool     *queue.WorkerPool
+	db             *pgxpool.Pool
+	startTime      time.Time
+	healthHandler  *api.HealthHandler
+	taskHandler    *api.TaskHandler
+	metricsHandler *api.MetricsHandler
+	workerPool     *queue.WorkerPool
 }
 
-func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	ctx := context.Background()
+func NewApplication(start time.Time, cfg *config.Config, logger *slog.Logger) (*Application, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 
-	pool, err := db.Open(ctx)
+	pool, err := openDB()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create db pool: %w", err)
+		return nil, err
 	}
 
 	m := metrics.New()
-
 	taskStore := store.NewTaskStore(pool, m)
 
 	healthHandler := api.NewHealthHandler(start, pool)
@@ -46,6 +45,67 @@ func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
 
 	registry := tasks.NewDemoRegistry()
 
+	wp := newWorkerPool(taskStore, registry, logger, cfg, m)
+	healthHandler.IsWorkerReady = wp.Started
+
+	return &Application{
+		db:             pool,
+		startTime:      start,
+		healthHandler:  healthHandler,
+		taskHandler:    taskHandler,
+		metricsHandler: metricsHandler,
+		workerPool:     wp,
+	}, nil
+}
+
+func (a *Application) Start(ctx context.Context) {
+	if a.workerPool != nil {
+		a.workerPool.Start(ctx)
+	}
+}
+
+func (a *Application) Close() {
+	if a.db != nil {
+		a.db.Close()
+	}
+}
+
+func (app *Application) Routes() *http.ServeMux {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /api/v1/livez", app.healthHandler.CheckLiveness)
+	mux.HandleFunc("GET /api/v1/readyz", app.healthHandler.CheckReadiness)
+	mux.HandleFunc("GET /api/v1/health", app.healthHandler.CheckReadiness)
+
+	mux.HandleFunc("GET /api/v1/tasks", app.taskHandler.HandleListTasks)
+	mux.HandleFunc("POST /api/v1/tasks", app.taskHandler.HandleCreateTask)
+	mux.HandleFunc("GET /api/v1/tasks/{id}", app.taskHandler.HandleGetTaskById)
+	mux.HandleFunc("DELETE /api/v1/tasks/{id}", app.taskHandler.HandleDeleteTask)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", app.taskHandler.HandleRetryDeadTask)
+
+	mux.Handle("GET /api/v1/metrics", app.metricsHandler)
+
+	return mux
+}
+
+func openDB() (*pgxpool.Pool, error) {
+	ctx := context.Background()
+
+	pool, err := db.Open(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create db pool: %w", err)
+	}
+
+	return pool, nil
+}
+
+func newWorkerPool(
+	taskStore store.TaskStore,
+	registry tasks.HandlerRegistry,
+	logger *slog.Logger,
+	cfg *config.Config,
+	m *metrics.Metrics,
+) *queue.WorkerPool {
 	workerSettings := queue.Settings{
 		WorkerPrefix:      cfg.WorkerPrefix,
 		Concurrency:       cfg.WorkerCount,
@@ -58,24 +118,5 @@ func NewApplication(start time.Time, cfg *config.Config) (*Application, error) {
 		StaleThreshold:    cfg.StuckThreshold,
 	}
 
-	wp := queue.NewWorkerPool(taskStore, registry, logger, workerSettings, m)
-	healthHandler.IsWorkerReady = wp.Started
-
-	app := &Application{
-		DB:             pool,
-		Start:          start,
-		Logger:         logger,
-		HealthHandler:  healthHandler,
-		TaskHandler:    taskHandler,
-		MetricsHandler: metricsHandler,
-		WorkerPool:     wp,
-	}
-
-	return app, nil
-}
-
-func (a *Application) Close() {
-	if a.DB != nil {
-		a.DB.Close()
-	}
+	return queue.NewWorkerPool(taskStore, registry, logger, workerSettings, m)
 }

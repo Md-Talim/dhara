@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,45 +26,57 @@ func run() int {
 		return fail(err)
 	}
 
-	application, err := app.NewApplication(start, cfg)
+	logger := newLogger(cfg.LogFormat)
+
+	application, err := app.NewApplication(start, cfg, logger)
 	if err != nil {
-		return fail(err)
+		logger.Error("failed to build application", "err", err)
+		return 1
 	}
 	defer application.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	application.WorkerPool.Start(ctx)
+	application.Start(ctx)
 
 	server := &http.Server{
 		Addr:              ":" + strconv.Itoa(cfg.Port),
-		Handler:           application.SetupRoutes(),
+		Handler:           application.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	go func() {
-		application.Logger.Info("http server starting", "addr", server.Addr)
+		logger.Info("http server starting", "addr", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			application.Logger.Error("http server failed", "err", err)
+			logger.Error("http server failed", "err", err)
 			stop()
 		}
 	}()
 
 	<-ctx.Done()
 
-	application.Logger.Info("shutdown signal received")
+	logger.Info("shutdown signal received")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		application.Logger.Error("http shutdown failed", "err", err)
+		logger.Error("http shutdown failed", "err", err)
 		return 1
 	}
 
-	application.Logger.Info("server stopped")
+	logger.Info("server stopped")
 	return 0
+}
+
+func newLogger(format string) *slog.Logger {
+	switch format {
+	case "json":
+		return slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	default:
+		return slog.New(slog.NewTextHandler(os.Stdout, nil))
+	}
 }
 
 func fail(err error) int {
