@@ -33,7 +33,11 @@ func run() int {
 		logger.Error("failed to build application", "err", err)
 		return 1
 	}
-	defer application.Close()
+	defer func() {
+		if err := application.Shutdown(context.Background()); err != nil {
+			logger.Error("application shutdown failed", "err", err)
+		}
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -58,11 +62,16 @@ func run() int {
 
 	logger.Info("shutdown signal received")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("http shutdown failed", "err", err)
+		return 1
+	}
+
+	if err := application.Shutdown(shutdownCtx); err != nil {
+		logger.Error("application shutdown failed", "err", err)
 		return 1
 	}
 

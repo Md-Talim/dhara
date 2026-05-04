@@ -23,6 +23,10 @@ type WorkerPool struct {
 	started  atomic.Bool
 
 	metrics *metrics.Metrics
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 func NewWorkerPool(
@@ -56,6 +60,8 @@ func (p *WorkerPool) Start(ctx context.Context) {
 		return
 	}
 
+	p.ctx, p.cancel = context.WithCancel(ctx)
+
 	p.logger.Info(
 		"starting worker pool",
 		"concurrency", p.settings.Concurrency,
@@ -66,17 +72,47 @@ func (p *WorkerPool) Start(ctx context.Context) {
 	for i := 0; i < p.settings.Concurrency; i++ {
 		workerID := fmt.Sprintf("%s-%d", p.settings.WorkerPrefix, i+1)
 		w := p.newWorker(workerID)
-		go w.Start(ctx)
+
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			w.Start(p.ctx)
+		}()
 	}
 
 	reaperID := fmt.Sprintf("%s-reaper", p.settings.WorkerPrefix)
-	go newReaper(
-		p.store,
-		p.logger,
-		p.settings.ReaperInterval,
-		p.settings.StaleThreshold,
-		reaperID,
-	).start(ctx)
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		newReaper(
+			p.store,
+			p.logger,
+			p.settings.ReaperInterval,
+			p.settings.StaleThreshold,
+			reaperID,
+		).start(p.ctx)
+	}()
+}
+
+func (p *WorkerPool) Stop() {
+	if p.cancel != nil {
+		p.cancel()
+	}
+}
+
+func (p *WorkerPool) Wait(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.wg.Wait()
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-done:
+		return nil
+	}
 }
 
 func (p *WorkerPool) newWorker(workerID string) *Worker {

@@ -64,10 +64,20 @@ func (a *Application) Start(ctx context.Context) {
 	}
 }
 
-func (a *Application) Close() {
+func (a *Application) Shutdown(ctx context.Context) error {
+	if a.workerPool != nil {
+		a.workerPool.Stop()
+		if err := a.workerPool.Wait(ctx); err != nil {
+			return fmt.Errorf("wait for worker pool shutdown: %w", err)
+		}
+	}
+
 	if a.db != nil {
 		a.db.Close()
+		a.db = nil
 	}
+
+	return nil
 }
 
 func (app *Application) Routes() *http.ServeMux {
