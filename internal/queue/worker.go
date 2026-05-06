@@ -64,25 +64,25 @@ func (w *Worker) processNext(ctx context.Context) error {
 		return w.store.MarkDead(ctx, task.ID.String(), w.workerID, "no handler registered for type: "+task.Type, "no handler registered")
 	}
 
-	handlerCtx, cancel := context.WithTimeout(ctx, w.handlerTimeout)
+	taskCtx, cancel := context.WithTimeout(context.Background(), w.handlerTimeout)
 	defer cancel()
 
-	handlerCtx = ctxlog.WithLogger(handlerCtx, taskLogger)
+	taskCtx = ctxlog.WithLogger(taskCtx, taskLogger)
 
-	stopHeartbeat := w.startHeartbeat(handlerCtx, task)
+	stopHeartbeat := w.startHeartbeat(taskCtx, task)
 	defer stopHeartbeat()
 
 	w.metrics.WorkersInflight.Add(1)
 	defer w.metrics.WorkersInflight.Add(-1)
 
 	taskStartTime := time.Now()
-	if err = handler(handlerCtx, task.Payload); err != nil {
-		return w.handleFailure(ctx, task, err)
+	if err = handler(taskCtx, task.Payload); err != nil {
+		return w.handleFailure(taskCtx, task, err)
 	}
 
 	taskDurationMS := time.Since(taskStartTime).Milliseconds()
 	taskLogger.Info("task completed", "duration_ms", taskDurationMS)
-	return w.store.MarkCompleted(ctx, task.ID.String(), w.workerID, taskDurationMS)
+	return w.store.MarkCompleted(taskCtx, task.ID.String(), w.workerID, taskDurationMS)
 }
 
 func (w *Worker) startHeartbeat(heartbeatCtx context.Context, task *store.Task) func() {
