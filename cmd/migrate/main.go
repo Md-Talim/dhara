@@ -21,10 +21,15 @@ func main() {
 	}
 	defer pool.Close()
 
+	migrationsDir := os.Getenv("MIGRATIONS_DIR")
+	if migrationsDir == "" {
+		migrationsDir = "internal/db/migrations"
+	}
+
 	mctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	if err := migrations.RunMigrations(mctx, pool, logger, "internal/db/migrations"); err != nil {
+	if err := migrations.RunMigrations(mctx, pool, logger, migrationsDir); err != nil {
 		logger.Error("migration run failed", "err", err)
 		os.Exit(1)
 	}

@@ -20,21 +20,49 @@ It is an active work in progress, but the current codebase already covers the co
 - exposing operational health and metrics endpoints
 - running schema migrations
 
-The long-term goal is to evolve Dhara into a production-ready distributed task queue with:
-
-- reliable retries and backoff
-- stronger task recovery semantics
-- dead-letter handling
-- richer observability
-- improved task routing and scheduling
-- safer cancellation and retry flows
-- better operational tooling for debugging and support
-
 ## Status
 
 **In active development**
 
 Package names, structure, and startup flow may still change as the project matures.
+
+## Quick Start (demo)
+
+Prereqs: Go 1.26+, Docker, and running PostgreSQL instance.
+
+1. Start Postgres via Docker:
+2. Set the required environment variable:
+   export DHARA_DATABASE_URL="postgres://dhara:dhara@localhost:5432/dhara?sslmode=disable"
+
+    If you prefer a file, copy `.env.example` to `.env` and load it in your shell.
+
+3. Run the server (auto-migrates by default):
+   go run ./cmd/server
+
+4. Create a task:
+   curl -X POST http://localhost:8080/api/v1/tasks \
+    -H "Content-Type: application/json" \
+    -d '{"type":"echo","payload":{"message":"hello"}}'
+
+5. List tasks:
+   curl "http://localhost:8080/api/v1/tasks?limit=20"
+
+## Configuration
+
+Required:
+
+- `DHARA_DATABASE_URL` — PostgreSQL connection string.
+
+Optional (defaults shown in `.env.example`):
+
+- `AUTO_MIGRATE` (default `true`)
+- `MIGRATIONS_DIR` (default `internal/db/migrations`)
+- `PORT` (default `8080`)
+- `WORKER_COUNT` (default `5`)
+- `HANDLER_TIMEOUT` (default `5m`)
+- `SHUTDOWN_TIMEOUT` (default `30s`)
+- `LOG_LEVEL` (default `info`)
+- `LOG_FORMAT` (default `text`)
 
 ## Current features
 
@@ -48,10 +76,9 @@ Package names, structure, and startup flow may still change as the project matur
 - Heartbeats for running tasks
 - Reaper for stale running tasks
 - Task handlers for demo workloads
-- Migration runner for database schema setup
-- `/livez` and `/readyz` health endpoints
-- `/healthz` style readiness/liveness gates, depending on routing setup
-- Prometheus-style `/metrics` endpoint
+- Automatic migrations on startup (configurable)
+- `/api/v1/livez`, `/api/v1/readyz`, `api/v1/health` health endpoints
+- Prometheus-style `/api/v1/metrics` endpoint
 - Structured logging with `slog`
 
 ## Project overview
@@ -181,13 +208,15 @@ This is intentionally simple today, but it mirrors the core mechanics used by pr
 
 ## Migrations
 
-To apply database migrations:
+By default, the server runs migrations on startup when `AUTO_MIGRATE=true`.
+
+To run them manually (or if `AUTO_MIGRATE=false`):
 
 ```bash
 go run ./cmd/migrate
 ```
 
-Make sure `DHARA_DATABASE_URL` is set.
+The `MIGRATIONS_DIR` environment variable controls the directory (default `internal/db/migrations`).
 
 ## Running the server
 
@@ -195,14 +224,12 @@ Make sure `DHARA_DATABASE_URL` is set.
 go run ./cmd/server
 ```
 
-Environment:
-
-- `DHARA_DATABASE_URL` — PostgreSQL connection string
+Make sure `DHARA_DATABASE_URL` is set.
 
 The server will:
 
 - open the database pool
-- run migrations
+- run migrations when `AUTO_MIGRATE=true`
 - initialize task storage
 - start the worker pool
 - serve HTTP on `:8080`

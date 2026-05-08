@@ -11,6 +11,7 @@ import (
 	"github.com/md-talim/dhara/internal/api"
 	"github.com/md-talim/dhara/internal/config"
 	"github.com/md-talim/dhara/internal/db"
+	"github.com/md-talim/dhara/internal/db/migrations"
 	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/queue"
 	"github.com/md-talim/dhara/internal/store"
@@ -34,6 +35,16 @@ func NewApplication(start time.Time, cfg *config.Config, logger *slog.Logger) (*
 	pool, err := openDB()
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.AutoMigrate {
+		mctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		if err := migrations.RunMigrations(mctx, pool, logger, cfg.MigrationsDir); err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("run migrations: %w", err)
+		}
 	}
 
 	m := metrics.New()

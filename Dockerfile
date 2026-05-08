@@ -10,5 +10,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o main ./cmd/server
 FROM alpine:latest
 WORKDIR /root/
 COPY --from=builder /app/main .
+COPY --from=builder /app/internal/db/migrations /root/internal/db/migrations
 EXPOSE 8080
 CMD ["./main"]

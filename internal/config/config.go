@@ -26,6 +26,9 @@ type Config struct {
 
 	LogLevel  string
 	LogFormat string
+
+	AutoMigrate   bool
+	MigrationsDir string
 }
 
 func NewFromEnv() (*Config, error) {
@@ -47,6 +50,9 @@ func NewFromEnv() (*Config, error) {
 
 		LogLevel:  getEnvString("LOG_LEVEL", "info"),
 		LogFormat: getEnvString("LOG_FORMAT", "text"),
+
+		AutoMigrate:   getEnvBool("AUTO_MIGRATE", true),
+		MigrationsDir: getEnvString("MIGRATIONS_DIR", "internal/db/migrations"),
 	}
 
 	// basic validations
@@ -86,6 +92,9 @@ func NewFromEnv() (*Config, error) {
 	if c.Port <= 0 {
 		return nil, fmt.Errorf("PORT must be > 0")
 	}
+	if c.AutoMigrate && c.MigrationsDir == "" {
+		return nil, fmt.Errorf("MIGRATIONS_DIR must be set when AUTO_MIGRATE is true")
+	}
 
 	return c, nil
 }
@@ -114,6 +123,15 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 		}
 		if i, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
 			return time.Duration(i) * time.Second
+		}
+	}
+	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return defaultValue
