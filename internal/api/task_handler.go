@@ -47,7 +47,7 @@ func (h *TaskHandler) HandleListTasks(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "limit must be a positive integer")
 			return
 		}
-		filter.Limit = max(n, 100)
+		filter.Limit = min(n, 100)
 	}
 
 	// Parse offset.
