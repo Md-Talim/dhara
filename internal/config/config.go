@@ -96,6 +96,22 @@ func NewFromEnv() (*Config, error) {
 		return nil, fmt.Errorf("MIGRATIONS_DIR must be set when AUTO_MIGRATE is true")
 	}
 
+	switch strings.ToLower(c.LogFormat) {
+	case "text", "json":
+		c.LogFormat = strings.ToLower(c.LogFormat)
+	default:
+		return nil, fmt.Errorf("invalid LOG_FORMAT: %s", c.LogFormat)
+	}
+
+	switch strings.ToLower(c.LogLevel) {
+	case "debug", "info", "warn", "error":
+		c.LogLevel = strings.ToLower(c.LogLevel)
+	case "warning":
+		c.LogLevel = "warn"
+	default:
+		return nil, fmt.Errorf("invalid LOG_LEVEL: %s", c.LogLevel)
+	}
+
 	return c, nil
 }
 
