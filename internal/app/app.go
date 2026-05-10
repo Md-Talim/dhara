@@ -27,7 +27,7 @@ type Application struct {
 	workerPool     *queue.WorkerPool
 }
 
-func NewApplication(start time.Time, cfg *config.Config, logger *slog.Logger) (*Application, error) {
+func NewApplication(start time.Time, cfg *config.Config, logger *slog.Logger, registry tasks.HandlerRegistry) (*Application, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -53,8 +53,6 @@ func NewApplication(start time.Time, cfg *config.Config, logger *slog.Logger) (*
 	healthHandler := api.NewHealthHandler(start, pool)
 	taskHandler := api.NewTaskHandler(taskStore, logger)
 	metricsHandler := api.NewMetricsHandler(taskStore, m)
-
-	registry := tasks.NewDemoRegistry()
 
 	wp := newWorkerPool(taskStore, registry, logger, cfg, m)
 	healthHandler.IsWorkerReady = wp.Started

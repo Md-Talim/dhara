@@ -47,6 +47,8 @@ Prereqs: Go 1.26+, Docker, and running PostgreSQL instance.
 5. List tasks:
    curl "http://localhost:8080/api/v1/tasks?limit=20"
 
+6. To register custom task types, see [Adding custom task types](#adding-custom-task-types).
+
 ## Configuration
 
 Required:
@@ -244,6 +246,53 @@ The current demo handlers include:
 - `slow_task`
 
 These are intentionally simple and are meant to exercise the worker and recovery flow.
+
+## Adding custom task types
+
+Dhara uses a registry that maps task type strings to handler function. To add your own:
+
+1. Implement a handler with signature `func(ctx context.Context, payload json.RawMessage) error`.
+
+    Example handler (e.g., `internal/tasks/custom_handlers.go`):
+
+    ```go
+    import (
+        "context"
+        "encoding/json"
+        "fmt"
+
+        "github.com/md-talim/dhara/internal/ctxlog"
+    )
+
+    func WelcomeEmail(ctx context.Context, payload json.RawMessage) error {
+        var p struct {
+            To      string `json:"to"`
+            Subject string `json:"subject"`
+        }
+        if err := json.Unmarshal(payload, &p); err != nil {
+            return fmt.Errorf("invalid payload: %w", err)
+        }
+
+        ctxlog.From(ctx).Info("sending welcome email", "to", p.To, "subject", p.Subject)
+        return nil
+    }
+    ```
+
+2) Register your handler in `cmd/server/main.go`:
+
+    ```go
+    registry := tasks.NewRegistry(map[string]tasks.HandlerFunc{
+         "echo":          tasks.Echo,
+         "send_email":    tasks.SendEmail,
+         "welcome_email": tasks.WelcomeEmail,
+     })
+
+     application, err := app.NewApplication(start, cfg, logger, registry)
+    ```
+
+3) Submit tasks with `"type": "welcome_email"` in the API request.
+
+See [`internal/tasks/demo_handlers.go`](./internal/tasks/demo_handlers.go)`` for more examples.
 
 ## Design goals
 
