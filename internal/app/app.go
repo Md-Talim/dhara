@@ -103,6 +103,7 @@ func (app *Application) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", app.taskHandler.HandleRetryDeadTask)
 
 	mux.Handle("GET /api/v1/metrics", app.metricsHandler)
+	mux.Handle("GET /metrics", app.metricsHandler)
 
 	return mux
 }
