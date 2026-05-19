@@ -20,32 +20,38 @@ It is an active work in progress, but the current codebase already covers the co
 - exposing operational health and metrics endpoints
 - running schema migrations
 
-## Status
-
-**In active development**
-
-Package names, structure, and startup flow may still change as the project matures.
-
 ## Quick Start (demo)
 
 Prereqs: Go 1.26+, Docker, and running PostgreSQL instance.
 
 1. Start Postgres via Docker:
 2. Set the required environment variable:
-   export DHARA_DATABASE_URL="postgres://dhara:dhara@localhost:5432/dhara?sslmode=disable"
+
+    ```bash
+    export DHARA_DATABASE_URL="postgres://dhara:dhara@localhost:5432/dhara?sslmode=disable"
+    ```
 
     If you prefer a file, copy `.env.example` to `.env` and load it in your shell.
 
 3. Run the server (auto-migrates by default):
-   go run ./cmd/server
+
+    ```bash
+    go run ./cmd/server
+    ```
 
 4. Create a task:
-   curl -X POST http://localhost:8080/api/v1/tasks \
+
+    ```bash
+    curl -X POST http://localhost:8080/api/v1/tasks \
     -H "Content-Type: application/json" \
     -d '{"type":"echo","payload":{"message":"hello"}}'
+    ```
 
 5. List tasks:
-   curl "http://localhost:8080/api/v1/tasks?limit=20"
+
+    ```bash
+    curl "http://localhost:8080/api/v1/tasks?limit=20"
+    ```
 
 6. To register custom task types, see [Adding custom task types](#adding-custom-task-types).
 
