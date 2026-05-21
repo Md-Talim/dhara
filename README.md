@@ -25,6 +25,11 @@ It is an active work in progress, but the current codebase already covers the co
 Prereqs: Go 1.26+, Docker, and running PostgreSQL instance.
 
 1. Start Postgres via Docker:
+
+    ```bash
+    docker compose up db
+    ```
+
 2. Set the required environment variable:
 
     ```bash
