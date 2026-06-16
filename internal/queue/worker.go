@@ -61,7 +61,12 @@ func (w *Worker) processNext(ctx context.Context) error {
 	handler, ok := w.registry.Get(task.Type)
 	if !ok {
 		taskLogger.Warn("no handler registered for task type")
-		return w.store.MarkDead(ctx, task.ID.String(), w.workerID, "no handler registered for type: "+task.Type, "no handler registered")
+		err := w.store.MarkDead(ctx, task.ID.String(), w.workerID, "no handler registered for type: "+task.Type, "no handler registered")
+		if errors.Is(err, store.ErrTaskOwnershipLost) {
+			taskLogger.Warn("lost task ownership before marking dead")
+			return nil
+		}
+		return err
 	}
 
 	taskCtx, cancel := context.WithTimeout(context.Background(), w.handlerTimeout)
@@ -81,8 +86,16 @@ func (w *Worker) processNext(ctx context.Context) error {
 	}
 
 	taskDurationMS := time.Since(taskStartTime).Milliseconds()
+	if err := w.store.MarkCompleted(taskCtx, task.ID.String(), w.workerID, taskDurationMS); err != nil {
+		if errors.Is(err, store.ErrTaskOwnershipLost) {
+			taskLogger.Warn("lost task ownership before marking completed")
+			return nil
+		}
+		return fmt.Errorf("mark task completed: %w", err)
+	}
+
 	taskLogger.Info("task completed", "duration_ms", taskDurationMS)
-	return w.store.MarkCompleted(taskCtx, task.ID.String(), w.workerID, taskDurationMS)
+	return nil
 }
 
 func (w *Worker) startHeartbeat(heartbeatCtx context.Context, task *store.Task) func() {
@@ -118,23 +131,34 @@ func (w *Worker) handleFailure(ctx context.Context, task *store.Task, err error)
 	taskLogger := w.taskLogger(task)
 	taskLogger.Warn("task failed", "err", err)
 
+	var storeErr error
 	if task.Attempts >= task.MaxRetries {
-		return w.store.MarkDead(ctx, task.ID.String(), w.workerID, err.Error(), "all attempts exhausted")
+		storeErr = w.store.MarkDead(ctx, task.ID.String(), w.workerID, err.Error(), "all attempts exhausted")
+	} else {
+		// exponential backoff: 10s, 20s, 40s, 80s...
+		backoff := w.baseBackoff * (1 << max(task.Attempts-1, 0))
+		if backoff > w.maxBackoff {
+			backoff = w.maxBackoff
+		}
+
+		nextRunAt := time.Now().Add(backoff)
+		storeErr = w.store.MarkPending(ctx, task, w.workerID, err.Error(), nextRunAt)
+		if storeErr == nil {
+			taskLogger.Info("retrying task",
+				"next_run_at", nextRunAt.UTC().Format(time.RFC3339),
+				"backoff_ms", backoff.Milliseconds(),
+			)
+		}
 	}
 
-	// exponential backoff: 10s, 20s, 40s, 80s...
-	backoff := w.baseBackoff * (1 << max(task.Attempts-1, 0))
-	if backoff > w.maxBackoff {
-		backoff = w.maxBackoff
+	if errors.Is(storeErr, store.ErrTaskOwnershipLost) {
+		taskLogger.Warn("lost task ownership before persisting failure result")
+		return nil
 	}
-	nextRunAt := time.Now().Add(backoff)
-
-	taskLogger.Info("retrying task",
-		"next_run_at", nextRunAt.UTC().Format(time.RFC3339),
-		"backoff_ms", backoff.Milliseconds(),
-	)
-
-	return w.store.MarkPending(ctx, task, w.workerID, err.Error(), nextRunAt)
+	if storeErr != nil {
+		return storeErr
+	}
+	return nil
 }
 
 func (w *Worker) taskLogger(task *store.Task) *slog.Logger {

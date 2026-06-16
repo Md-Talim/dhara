@@ -361,7 +361,7 @@ func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID, workerID
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, updateQuery, taskID, workerID).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTaskNotFound
+			return ErrTaskOwnershipLost
 		}
 		return fmt.Errorf("mark complete: %w", err)
 	}
@@ -404,7 +404,7 @@ func (ts *PostgresTaskStore) MarkPending(ctx context.Context, task *Task, worker
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, query, task.ID, workerID, lastError, nextRunAt).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTaskNotFound
+			return ErrTaskOwnershipLost
 		}
 		return fmt.Errorf("mark pending: %w", err)
 	}
@@ -451,7 +451,7 @@ func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, workerID, las
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, updateQuery, taskID, workerID, lastError).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTaskNotFound
+			return ErrTaskOwnershipLost
 		}
 		return fmt.Errorf("mark dead: %w", err)
 	}
