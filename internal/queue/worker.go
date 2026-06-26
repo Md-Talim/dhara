@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"math/rand"
 	"time"
 
 	"github.com/md-talim/dhara/internal/ctxlog"
@@ -135,11 +137,7 @@ func (w *Worker) handleFailure(ctx context.Context, task *store.Task, err error)
 	if task.Attempts >= task.MaxRetries {
 		storeErr = w.store.MarkDead(ctx, task.ID.String(), w.workerID, err.Error(), "all attempts exhausted")
 	} else {
-		// exponential backoff: 10s, 20s, 40s, 80s...
-		backoff := w.baseBackoff * (1 << max(task.Attempts-1, 0))
-		if backoff > w.maxBackoff {
-			backoff = w.maxBackoff
-		}
+		backoff := w.computeBackoff(task.Attempts)
 
 		nextRunAt := time.Now().Add(backoff)
 		storeErr = w.store.MarkPending(ctx, task, w.workerID, err.Error(), nextRunAt)
@@ -169,4 +167,15 @@ func (w *Worker) taskLogger(task *store.Task) *slog.Logger {
 		"attempts", task.Attempts,
 		"max_retries", task.MaxRetries,
 	)
+}
+
+func (w *Worker) computeBackoff(attempts int) time.Duration {
+	base := float64(w.baseBackoff)
+	cap := float64(w.maxBackoff)
+	attempt := float64(max(attempts-1, 0))
+
+	exp := math.Min(cap, base*math.Pow(2, attempt))
+	jitter := rand.Float64() * exp
+	backoff := time.Duration(jitter)
+	return backoff
 }
