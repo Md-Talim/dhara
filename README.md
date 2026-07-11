@@ -98,6 +98,10 @@ Optional (defaults shown in `.env.example`):
 
 Dhara uses PostgreSQL as the source of truth for task state.
 
+<p align="center">
+  <img src="assets/architecture.png" alt="Dhara architecture diagram" style="max-width: 100%; width: 800px;" />
+</p>
+
 ### Main components
 
 - **HTTP server**
@@ -325,7 +329,7 @@ Package names, structure, and APIs may be refactored as development continues.
 
 ## Planned work
 
-- stronger retry semantics with jitter
+- ~~stronger retry semantics with jitter~~
 - improved dead-letter handling
 - task execution histograms
 - better queue latency metrics
