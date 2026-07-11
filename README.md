@@ -4,263 +4,138 @@
 
 # dhara
 
-Dhara is a Go-based distributed task queue built on PostgreSQL.
+**Dhara** is a lightweight, production-focused distributed task queue implementation in Go and backed by PostgreSQL. Designed for simplicity, reliability, and high visibility, Dhara handles the complete task queue lifecycle without requiring heavy external dependencies like Redis or RabbitMQ.
 
-It is an active work in progress, but the current codebase already covers the core queue lifecycle:
+[Quick Start](#quick-start) • [Architecture](#architecture-and-task-lifecycle) • [Configuration](#configuration) • [API Reference](#api--observability-reference)
 
-- creating tasks via HTTP
-- listing and fetching tasks
-- canceling tasks
-- retrying dead tasks
-- claiming tasks from PostgreSQL
-- executing tasks in worker pools
-- heartbeating running tasks
-- reaping stale running tasks
-- recording task status changes and logs
-- exposing operational health and metrics endpoints
-- running schema migrations
+## Engineering Highlights & Architectural Decisions
 
-## Quick Start (demo)
+This project is build from scratch to demonstrate production-grade Go patterns, reliable system design, and strict transactional guarantees.
 
-Prereqs: Go 1.26+, Docker, and running PostgreSQL instance.
+1. **Atomic Concurrency with PostgreSQL (`SKIP LOCKED`)**
 
-1. Start Postgres via Docker:
+    Instead of using external distributed lock managers, Dhara utilizes PostgreSQL as a highly concurrent queue broker. Task claiming is implemented using transactional **`SELECT ... FOR UPDATE SKIP LOCKED`** operations. This guarantees that:
 
-    ```bash
-    docker compose up db
-    ```
+    - Multiple horizontal workers can poll the database concurrently without race conditions.
+    - Each pending task is claimed atomically by exactly one worker.
+    - Lock contention is completely avoided, maintaining high throughput.
 
-2. Set the required environment variable:
+2. **Failure Recovery: Heartbeats & The Reaper Pattern**
 
-    ```bash
-    export DHARA_DATABASE_URL="postgres://dhara:dhara@localhost:5432/dhara?sslmode=disable"
-    ```
+    Distributed workers can crash, lose network connectivity, or experience hardware failures. Dhara ensures task execution safely through a dual-mechanism recovery pattern:
 
-    If you prefer a file, copy `.env.example` to `.env` and load it in your shell.
+    - **Heartbeating:** Running worker goroutines periodically update task heartbeats in the database.
+    - **The Reaper:** A background process detects stale tasks that have missed their heartbeat window. Depending on the configuration, the reaper atomically requeues the task (incrementing its attempt counter) or moves it to a dead-letter state once max retries are exhausted.
 
-3. Run the server (auto-migrates by default):
+3. **Resilient Retries with Full Jitter**
 
-    ```bash
-    go run ./cmd/server
-    ```
+    To prevent the "thundering herd" problem when retrying failed tasks, Dhara implements an exponential backoff retry algorithm augmented with **Full Jitter**. This spreads out retry attempts randomly across a safe window, protecting downstream databases and services from traffic spikes.
 
-4. Create a task:
+4. **Zero-Dependency & Clean Architecture:** **Standard Library Routing**
 
-    ```bash
-    curl -X POST http://localhost:8080/api/v1/tasks \
-    -H "Content-Type: application/json" \
-    -d '{"type":"echo","payload":{"message":"hello"}}'
-    ```
+    Implements standard HTTP routing using Go 1.22's enhanced standard library `http.ServeMux`, keeping the binary footprint small and eliminating external framework bloat.
 
-5. List tasks:
+    - **Structured Logging:** Uses the standard library `slog` for structured logging (available in both plain text and JSON formats for modern log aggregators).
+    - **Graceful Shutdown:** Handles `SIGINT` / `SIGTERM` signals natively. On shutdown, it stops new task ingestion, allows active workers a configurable timeout to finish processing in-flight tasks, and gracefully drains database connection pools to prevent database state corruption.
 
-    ```bash
-    curl "http://localhost:8080/api/v1/tasks?limit=20"
-    ```
+## Architecture and Task Lifecycle
 
-6. To register custom task types, see [Adding custom task types](#adding-custom-task-types).
-
-## Configuration
-
-Required:
-
-- `DHARA_DATABASE_URL` — PostgreSQL connection string.
-
-Optional (defaults shown in `.env.example`):
-
-- `AUTO_MIGRATE` (default `true`)
-- `MIGRATIONS_DIR` (default `internal/db/migrations`)
-- `PORT` (default `8080`)
-- `WORKER_COUNT` (default `5`)
-- `HANDLER_TIMEOUT` (default `5m`)
-- `SHUTDOWN_TIMEOUT` (default `30s`)
-- `LOG_LEVEL` (default `info`)
-- `LOG_FORMAT` (default `text`)
-
-## Current features
-
-- PostgreSQL-backed task storage
-- Task creation API
-- Task listing API
-- Task retrieval API
-- Task cancellation API
-- Manual retry of dead tasks
-- Worker pool that polls for pending tasks
-- Heartbeats for running tasks
-- Reaper for stale running tasks
-- Task handlers for demo workloads
-- Automatic migrations on startup (configurable)
-- `/api/v1/livez`, `/api/v1/readyz`, `api/v1/health` health endpoints
-- Prometheus-style `/api/v1/metrics` endpoint
-- Structured logging with `slog`
-
-## Project overview
-
-Dhara uses PostgreSQL as the source of truth for task state.
+Dhara uses PostgreSQL as the single source of truth for task state and execution logs.
 
 <p align="center">
   <img src="assets/architecture.png" alt="Dhara architecture diagram" style="max-width: 100%; width: 800px;" />
 </p>
 
-### Main components
+### The Task Lifecycle Flow
 
-- **HTTP server**
-  Exposes the task API, health endpoints, and metrics endpoint.
-
-- **Task store**
-  Handles database operations for creating, claiming, updating, retrying, canceling, and reading tasks.
-
-- **Worker pool**
-  Continuously polls for pending tasks and executes handlers concurrently.
-
-- **Reaper**
-  Detects stale running tasks and either requeues them or marks them dead.
-
-- **Task handlers**
-  Business logic for task types such as `echo`, `send_email`, `always_fail`, and `slow_task`.
-
-- **Migrations**
-  Sets up and evolves the database schema.
-
-- **Metrics**
-  Exposes queue health and lifecycle counters for operational visibility.
-
-## Current execution flow
-
-1. A client submits a task through the HTTP API.
-2. The task is stored in PostgreSQL with `PENDING` status.
-3. Worker goroutines poll for available tasks.
-4. A worker atomically claims a pending task.
-5. The matching handler executes the task payload.
-6. The task is marked `COMPLETED`, retried with backoff, or marked `DEAD`.
-7. Heartbeats keep running tasks alive while they are executing.
-8. The reaper requeues stale running tasks or moves them to dead-letter state.
-9. Task status changes are recorded in `task_logs`.
-
-## Health endpoints
-
-The service exposes health endpoints to help with orchestration and monitoring.
-
-- `GET /api/v1/livez`
-  Liveness probe. Returns `200` when the process is running.
-
-- `GET /api/v1/readyz`
-  Readiness probe. Typically checks database connectivity and startup gates.
-
-- `GET /api/v1/health`
-  Alias of readiness in the current API layout.
-
-## Metrics endpoint
-
-- `GET /metrics`
-
-Returns metrics in Prometheus text exposition format.
-
-The endpoint includes:
-
-- task lifecycle counters
-- current queue state from PostgreSQL
-- worker counts
-- inflight execution counts
-
-Example metric families:
-
-- `tasks_enqueued_total`
-- `tasks_completed_total`
-- `tasks_attempt_failures_total`
-- `tasks_retried_total`
-- `tasks_dead_total`
-- `tasks_canceled_total`
-- `tasks_reaped_total`
-- `tasks_by_status{status="PENDING"}`
-- `tasks_pending_breakdown{status="ready"}`
-- `workers_total`
-- `workers_inflight`
-
-## HTTP API
-
-The API is still evolving, but currently includes:
-
-- `POST /api/v1/tasks`
-- `GET /api/v1/tasks/{id}`
-- `GET /api/v1/tasks`
-- `DELETE /api/v1/tasks/{id}`
-- `POST /api/v1/tasks/{id}/retry`
-
-More endpoints may be added later, including:
-
-- richer filtering and pagination options
-- task introspection/debug endpoints
-- per-task execution history
-- operational admin endpoints
-
-## Task lifecycle
-
-Dhara currently supports the following task states:
-
-- `PENDING`
-- `RUNNING`
-- `COMPLETED`
-- `CANCELED`
-- `DEAD`
-
-### Lifecycle behavior
-
-- `PENDING` tasks are eligible for workers to claim.
-- `RUNNING` tasks are being processed by a worker.
-- `COMPLETED` tasks finished successfully.
-- `CANCELED` tasks were canceled before execution.
-- `DEAD` tasks exhausted retries or were explicitly marked unrecoverable.
-
-## Retry and recovery behavior
-
-Dhara includes basic failure recovery mechanics:
-
-- failed tasks can be retried with exponential backoff
-- running tasks send periodic heartbeats
-- stale running tasks can be reaped and requeued
-- tasks that exceed retry limits can be marked dead
-
-This is intentionally simple today, but it mirrors the core mechanics used by production queue systems.
-
-## Migrations
-
-By default, the server runs migrations on startup when `AUTO_MIGRATE=true`.
-
-To run them manually (or if `AUTO_MIGRATE=false`):
-
-```bash
-go run ./cmd/migrate
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING : Task Created via API
+    PENDING --> RUNNING : Claimed by Worker (SKIP LOCKED)
+    RUNNING --> COMPLETED : Execution Success
+    RUNNING --> PENDING : Execution Failure / Stale Heartbeat (Retry with Jitter)
+    RUNNING --> DEAD : Max Retries Exhausted
+    PENDING --> CANCELED : Canceled via API
+    RUNNING --> CANCELED : Canceled via API
 ```
 
-The `MIGRATIONS_DIR` environment variable controls the directory (default `internal/db/migrations`).
+## Quick Start
 
-## Running the server
+Prerequisites: Go 1.26+, Docker & Docker compose
 
-```bash
-go run ./cmd/server
-```
+1. **Spin up the Database**
 
-Make sure `DHARA_DATABASE_URL` is set.
+    Start a local PostgreSQL instance:
 
-The server will:
+    ```bash
+    docker compose up db -d
+    ```
 
-- open the database pool
-- run migrations when `AUTO_MIGRATE=true`
-- initialize task storage
-- start the worker pool
-- serve HTTP on `:8080`
+2. **Set Up Environment & Run**
 
-## Demo task types
+    Copy the example environment configuration and run the server (which automatically runs database schema migrations on startup by default):
 
-The current demo handlers include:
+    ```bash
+    export DHARA_DATABASE_URL="postgres://dhara:dhara@localhost:5432/dhara?sslmode=disable"
+    go run ./cmd/server
+    ```
 
-- `echo`
-- `send_email`
-- `always_fail`
-- `slow_task`
+3. **Interact with the Queue**
 
-These are intentionally simple and are meant to exercise the worker and recovery flow.
+    **Create a task:**
+
+    ```bash
+    curl -X POST http://localhost:8080/api/v1/tasks \
+    -H "Content-Type: application/json" \
+    -d '{"type":"echo","payload":{"message":"Hello, Dhara!"}}'
+    ```
+
+    **List active tasks:**
+
+    ```bash
+    curl "http://localhost:8080/api/v1/tasks?limit=20"
+    ```
+
+4. To register custom task types, see [Adding custom task types](#adding-custom-task-types).
+
+## Configuration
+
+Dhara is configured entirely via environment variables.
+
+| Variable             | Default Value            | Description                                            |
+| :------------------- | :----------------------- | :----------------------------------------------------- |
+| `DHARA_DATABASE_URL` | _Required_               | PostgreSQL connection string                           |
+| `AUTO_MIGRATE`       | `true`                   | Automatically run migrations on server startup         |
+| `MIGRATIONS_DIR`     | `internal/db/migrations` | Path to the SQL migrations directory                   |
+| `PORT`               | `8080`                   | Port for the HTTP API server                           |
+| `WORKER_COUNT`       | `5`                      | Size of the local concurrent worker pool               |
+| `HANDLER_TIMEOUT`    | `5m`                     | Maximum execution time limit for any single task       |
+| `SHUTDOWN_TIMEOUT`   | `30s`                    | Maximum time allowed to drain active tasks on shutdown |
+| `LOG_LEVEL`          | `info`                   | Logging verbosity (`debug`, `info`, `warn`, `error`)   |
+| `LOG_FORMAT`         | `text`                   | Structured log output style (`text` or `json`)         |
+
+## API & Observability Reference
+
+### Task Management API
+
+- `POST /api/v1/tasks` — Enqueue a new task.
+- `GET /api/v1/tasks` — Query and list tasks with metadata.
+- `GET /api/v1/tasks/{id}` — Fetch detailed status of a specific task.
+- `DELETE /api/v1/tasks/{id}` — Cancel a `PENDING` or `RUNNING` task.
+- `POST /api/v1/tasks/{id}/retry` — Manually trigger a retry for a `DEAD` task.
+
+### Orchestration Health Probes
+
+- `GET /api/v1/livez` — Liveness probe. Returns `200 OK` when the process is up.
+- `GET /api/v1/readyz` — Readiness probe. Verifies database connectivity and worker pool status before routing traffic.
+
+### Prometheus Metrics
+
+- `GET /metrics` or `GET /api/v1/metrics`
+  Exposes system-level metrics in standard Prometheus exposition format. Prominent metrics include:
+- `tasks_enqueued_total`, `tasks_completed_total`, `tasks_dead_total` (lifecycle tracking)
+- `tasks_by_status{status="..."}` (queue size & backlogs)
+- `workers_total`, `workers_inflight` (worker resource utilization)
 
 ## Adding custom task types
 
@@ -289,11 +164,12 @@ Dhara uses a registry that maps task type strings to handler function. To add yo
         }
 
         ctxlog.From(ctx).Info("sending welcome email", "to", p.To, "subject", p.Subject)
+        // perform task logic here...
         return nil
     }
     ```
 
-2) Register your handler in `cmd/server/main.go`:
+2)  Register your custom handler in `cmd/server/main.go` with the registry:
 
     ```go
     registry := tasks.NewRegistry(map[string]tasks.HandlerFunc{
@@ -305,27 +181,15 @@ Dhara uses a registry that maps task type strings to handler function. To add yo
      application, err := app.NewApplication(start, cfg, logger, registry)
     ```
 
-3) Submit tasks with `"type": "welcome_email"` in the API request.
+3)  Submit tasks with `"type": "welcome_email"` in the API request.
+
+    ```bash
+    curl -X POST http://localhost:8080/api/v1/tasks \
+     -H "Content-Type: application/json" \
+     -d '{"type":"welcome_email","payload":{"to":"dev@example.com","subject":"Welcome to Dhara!"}}'
+    ```
 
 See [`internal/tasks/demo_handlers.go`](./internal/tasks/demo_handlers.go)`` for more examples.
-
-## Design goals
-
-Dhara is being built with the following goals in mind:
-
-- correctness first
-- PostgreSQL as the durable queue backend
-- clear task state transitions
-- observable worker behavior
-- minimal dependencies
-- no HTTP framework, just Go’s standard library
-- production-style operational visibility without external hosted services
-
-## Notes
-
-This repository is not finished yet.
-
-Package names, structure, and APIs may be refactored as development continues.
 
 ## Planned work
 
@@ -339,7 +203,3 @@ Package names, structure, and APIs may be refactored as development continues.
 - stronger validation and test coverage
 - clearer startup and wiring structure
 - refactoring around application bootstrap and lifecycle management
-
-## License
-
-TBD
