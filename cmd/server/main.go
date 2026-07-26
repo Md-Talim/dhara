@@ -12,7 +12,6 @@ import (
 
 	"github.com/md-talim/dhara/internal/app"
 	"github.com/md-talim/dhara/internal/config"
-	"github.com/md-talim/dhara/internal/tasks"
 )
 
 func main() {
@@ -28,9 +27,7 @@ func run() int {
 	}
 
 	logger := newLogger(cfg.LogFormat, cfg.LogLevel)
-	registry := tasks.NewDemoRegistry()
-
-	application, err := app.NewApplication(start, cfg, logger, registry)
+	application, err := app.NewApplication(start, cfg, logger)
 	if err != nil {
 		logger.Error("failed to build application", "err", err)
 		return 1
@@ -38,8 +35,6 @@ func run() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	application.Start(ctx)
 
 	server := &http.Server{
 		Addr:              ":" + strconv.Itoa(cfg.Port),

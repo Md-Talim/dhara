@@ -15,7 +15,6 @@ import (
 	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/queue"
 	"github.com/md-talim/dhara/internal/store"
-	"github.com/md-talim/dhara/internal/tasks"
 )
 
 type Application struct {
@@ -27,7 +26,7 @@ type Application struct {
 	workerPool     *queue.WorkerPool
 }
 
-func NewApplication(start time.Time, cfg *config.Config, logger *slog.Logger, registry tasks.HandlerRegistry) (*Application, error) {
+func NewApplication(start time.Time, cfg *config.Config, logger *slog.Logger) (*Application, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -54,33 +53,16 @@ func NewApplication(start time.Time, cfg *config.Config, logger *slog.Logger, re
 	taskHandler := api.NewTaskHandler(taskStore, logger)
 	metricsHandler := api.NewMetricsHandler(taskStore, m)
 
-	wp := newWorkerPool(taskStore, registry, logger, cfg, m)
-	healthHandler.IsWorkerReady = wp.Started
-
 	return &Application{
 		db:             pool,
 		startTime:      start,
 		healthHandler:  healthHandler,
 		taskHandler:    taskHandler,
 		metricsHandler: metricsHandler,
-		workerPool:     wp,
 	}, nil
 }
 
-func (a *Application) Start(ctx context.Context) {
-	if a.workerPool != nil {
-		a.workerPool.Start(ctx)
-	}
-}
-
 func (a *Application) Shutdown(ctx context.Context) error {
-	if a.workerPool != nil {
-		a.workerPool.Stop()
-		if err := a.workerPool.Wait(ctx); err != nil {
-			return fmt.Errorf("wait for worker pool shutdown: %w", err)
-		}
-	}
-
 	if a.db != nil {
 		a.db.Close()
 		a.db = nil
@@ -117,26 +99,4 @@ func openDB() (*pgxpool.Pool, error) {
 	}
 
 	return pool, nil
-}
-
-func newWorkerPool(
-	taskStore store.TaskStore,
-	registry tasks.HandlerRegistry,
-	logger *slog.Logger,
-	cfg *config.Config,
-	m *metrics.Metrics,
-) *queue.WorkerPool {
-	workerSettings := queue.Settings{
-		WorkerPrefix:      cfg.WorkerPrefix,
-		Concurrency:       cfg.WorkerCount,
-		PollInterval:      cfg.PollInterval,
-		HeartbeatInterval: cfg.HeartbeatInterval,
-		HandlerTimeout:    cfg.HandlerTimeout,
-		BaseBackoff:       cfg.BaseBackoff,
-		MaxBackoff:        cfg.MaxBackoff,
-		ReaperInterval:    cfg.ReaperInterval,
-		StaleThreshold:    cfg.StuckThreshold,
-	}
-
-	return queue.NewWorkerPool(taskStore, registry, logger, workerSettings, m)
 }

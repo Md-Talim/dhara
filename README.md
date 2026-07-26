@@ -73,11 +73,16 @@ Prerequisites: Go 1.26+, Docker & Docker compose
 
 2. **Set Up Environment & Run**
 
-    Copy the example environment configuration and run the server (which automatically runs database schema migrations on startup by default):
+    Dhara consists of two separate binaries: the **Server** (API) and the **Worker** (Task Processor). You can run them independently:
 
     ```bash
     export DHARA_DATABASE_URL="postgres://dhara:dhara@localhost:5432/dhara?sslmode=disable"
-    go run ./cmd/server
+
+    # Start the API Server
+    go run ./cmd/server &
+
+    # Start the Worker Process
+    go run ./cmd/worker &
     ```
 
 3. **Interact with the Queue**
