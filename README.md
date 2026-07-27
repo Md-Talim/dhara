@@ -174,7 +174,7 @@ Dhara uses a registry that maps task type strings to handler function. To add yo
     }
     ```
 
-2)  Register your custom handler in `cmd/server/main.go` with the registry:
+2)  Register your custom handler in `cmd/worker/main.go` with the registry:
 
     ```go
     registry := tasks.NewRegistry(map[string]tasks.HandlerFunc{
@@ -183,7 +183,8 @@ Dhara uses a registry that maps task type strings to handler function. To add yo
          "welcome_email": tasks.WelcomeEmail,
      })
 
-     application, err := app.NewApplication(start, cfg, logger, registry)
+     // Inside run(), replace tasks.NewDemoRegistry() with your custom registry:
+     // registry := tasks.NewRegistry(...)
     ```
 
 3)  Submit tasks with `"type": "welcome_email"` in the API request.
