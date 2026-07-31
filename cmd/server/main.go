@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/md-talim/dhara/internal/app"
 	"github.com/md-talim/dhara/internal/config"
+	"github.com/md-talim/dhara/internal/logging"
 )
 
 func main() {
@@ -26,7 +26,7 @@ func run() int {
 		return fail(err)
 	}
 
-	logger := newLogger(cfg.LogFormat, cfg.LogLevel)
+	logger := logging.New(cfg.LogFormat, cfg.LogLevel)
 	application, err := app.NewApplication(app.AppDependencies{
 		StartTime:     start,
 		Logger:        logger,
@@ -74,32 +74,6 @@ func run() int {
 
 	logger.Info("server stopped")
 	return 0
-}
-
-func newLogger(format string, level string) *slog.Logger {
-	opts := &slog.HandlerOptions{Level: parseLogLevel(level)}
-
-	switch format {
-	case "json":
-		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
-	default:
-		return slog.New(slog.NewTextHandler(os.Stdout, opts))
-	}
-}
-
-func parseLogLevel(level string) slog.Leveler {
-	switch level {
-	case "debug":
-		return slog.LevelDebug
-	case "info":
-		return slog.LevelInfo
-	case "warn", "warning":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
 }
 
 func fail(err error) int {
