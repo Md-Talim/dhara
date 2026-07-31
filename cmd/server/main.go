@@ -27,7 +27,12 @@ func run() int {
 	}
 
 	logger := newLogger(cfg.LogFormat, cfg.LogLevel)
-	application, err := app.NewApplication(start, cfg, logger)
+	application, err := app.NewApplication(app.AppDependencies{
+		StartTime:     start,
+		Logger:        logger,
+		AutoMigrate:   cfg.AutoMigrate,
+		MigrationsDir: cfg.MigrationsDir,
+	})
 	if err != nil {
 		logger.Error("failed to build application", "err", err)
 		return 1

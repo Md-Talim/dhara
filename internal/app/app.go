@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/md-talim/dhara/internal/api"
-	"github.com/md-talim/dhara/internal/config"
 	"github.com/md-talim/dhara/internal/db"
 	"github.com/md-talim/dhara/internal/db/migrations"
 	"github.com/md-talim/dhara/internal/metrics"
@@ -26,9 +25,16 @@ type Application struct {
 	workerPool     *queue.WorkerPool
 }
 
-func NewApplication(start time.Time, cfg *config.Config, logger *slog.Logger) (*Application, error) {
-	if logger == nil {
-		logger = slog.Default()
+type AppDependencies struct {
+	StartTime     time.Time
+	Logger        *slog.Logger
+	AutoMigrate   bool
+	MigrationsDir string
+}
+
+func NewApplication(deps AppDependencies) (*Application, error) {
+	if deps.Logger == nil {
+		deps.Logger = slog.Default()
 	}
 
 	pool, err := openDB()
@@ -36,11 +42,11 @@ func NewApplication(start time.Time, cfg *config.Config, logger *slog.Logger) (*
 		return nil, err
 	}
 
-	if cfg.AutoMigrate {
+	if deps.AutoMigrate {
 		mctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		if err := migrations.RunMigrations(mctx, pool, logger, cfg.MigrationsDir); err != nil {
+		if err := migrations.RunMigrations(mctx, pool, deps.Logger, deps.MigrationsDir); err != nil {
 			pool.Close()
 			return nil, fmt.Errorf("run migrations: %w", err)
 		}
@@ -49,13 +55,13 @@ func NewApplication(start time.Time, cfg *config.Config, logger *slog.Logger) (*
 	m := metrics.New()
 	taskStore := store.NewTaskStore(pool, m)
 
-	healthHandler := api.NewHealthHandler(start, pool)
-	taskHandler := api.NewTaskHandler(taskStore, logger)
+	healthHandler := api.NewHealthHandler(deps.StartTime, pool)
+	taskHandler := api.NewTaskHandler(taskStore, deps.Logger)
 	metricsHandler := api.NewMetricsHandler(taskStore, m)
 
 	return &Application{
 		db:             pool,
-		startTime:      start,
+		startTime:      deps.StartTime,
 		healthHandler:  healthHandler,
 		taskHandler:    taskHandler,
 		metricsHandler: metricsHandler,
