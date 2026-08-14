@@ -52,7 +52,7 @@ func NewFromEnv() (*Config, error) {
 		LogFormat: getEnvString("LOG_FORMAT", "text"),
 
 		AutoMigrate:   getEnvBool("AUTO_MIGRATE", true),
-		MigrationsDir: getEnvString("MIGRATIONS_DIR", "internal/db/migrations"),
+		MigrationsDir: getEnvString("MIGRATIONS_DIR", "migrations"),
 	}
 
 	// basic validations

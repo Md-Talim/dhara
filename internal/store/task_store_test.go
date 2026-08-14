@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/md-talim/dhara/internal/db"
-	"github.com/md-talim/dhara/internal/db/migrations"
 	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/store"
+	"github.com/md-talim/vow"
 )
 
 var testStore store.TaskStore
@@ -316,11 +316,19 @@ func setupTestDB(ctx context.Context) (*pgxpool.Pool, error) {
 		return nil, err
 	}
 
-	if err = migrations.RunMigrations(ctx, pool, nil, "../db/migrations"); err != nil {
+	migrator, err := vow.New(pool, os.DirFS("../../migrations"),
+		vow.WithTableName("dhara_vow_migrations"),
+		vow.WithLockName("dhara_vow_lock"),
+	)
+	if err != nil {
 		return nil, err
 	}
 
-	return pool, err
+	if _, err = migrator.Up(ctx); err != nil {
+		return nil, err
+	}
+
+	return pool, nil
 }
 
 func dropTables(ctx context.Context, db *pgxpool.Pool) {

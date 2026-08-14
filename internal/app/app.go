@@ -5,15 +5,16 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/md-talim/dhara/internal/api"
 	"github.com/md-talim/dhara/internal/db"
-	"github.com/md-talim/dhara/internal/db/migrations"
 	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/queue"
 	"github.com/md-talim/dhara/internal/store"
+	"github.com/md-talim/vow"
 )
 
 type Application struct {
@@ -46,10 +47,20 @@ func NewApplication(deps AppDependencies) (*Application, error) {
 		mctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		if err := migrations.RunMigrations(mctx, pool, deps.Logger, deps.MigrationsDir); err != nil {
-			pool.Close()
-			return nil, fmt.Errorf("run migrations: %w", err)
+		migrator, err := vow.New(pool, os.DirFS(deps.MigrationsDir),
+			vow.WithTableName("dhara_vow_migrations"),
+			vow.WithLockName("dhara_vow_lock"),
+			vow.WithLogger(deps.Logger),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create migrator: %w", err)
 		}
+
+		result, err := migrator.Up(mctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to run migrations: %w", err)
+		}
+		deps.Logger.Info("migrations applied", "applied", result.Versions, slog.Duration("duration", result.Duration))
 	}
 
 	m := metrics.New()

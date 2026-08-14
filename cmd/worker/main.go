@@ -9,12 +9,12 @@ import (
 
 	"github.com/md-talim/dhara/internal/config"
 	"github.com/md-talim/dhara/internal/db"
-	"github.com/md-talim/dhara/internal/db/migrations"
 	"github.com/md-talim/dhara/internal/logging"
 	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/queue"
 	"github.com/md-talim/dhara/internal/store"
 	"github.com/md-talim/dhara/internal/tasks"
+	"github.com/md-talim/vow"
 )
 
 func main() {
@@ -41,10 +41,23 @@ func run() int {
 	if cfg.AutoMigrate {
 		mctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		if err := migrations.RunMigrations(mctx, pool, logger, cfg.MigrationsDir); err != nil {
-			logger.Error("run migrations", "err", err)
+
+		migrator, err := vow.New(pool, os.DirFS(cfg.MigrationsDir),
+			vow.WithTableName("dhara_vow_migrations"),
+			vow.WithLockName("dhara_vow_lock"),
+			vow.WithLogger(logger),
+		)
+		if err != nil {
+			logger.Error("failed to create migrator", "err", err)
 			return 1
 		}
+
+		result, err := migrator.Up(mctx)
+		if err != nil {
+			logger.Error("failed to run migrations", "err", err)
+			return 1
+		}
+		logger.Info("migrations applied", "applied", result.Versions, "skipped", result.Skipped, "duration", result.Duration)
 	}
 
 	m := metrics.New()

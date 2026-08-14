@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/md-talim/dhara/internal/db"
-	"github.com/md-talim/dhara/internal/db/migrations"
+	"github.com/md-talim/vow"
 )
 
 func main() {
@@ -21,18 +21,28 @@ func main() {
 	}
 	defer pool.Close()
 
-	migrationsDir := os.Getenv("MIGRATIONS_DIR")
-	if migrationsDir == "" {
-		migrationsDir = "internal/db/migrations"
+	migrator, err := vow.New(pool, os.DirFS("migrations"),
+		vow.WithTableName("dhara_vow_migrations"),
+		vow.WithLockName("dhara_vow_lock"),
+		vow.WithLogger(logger),
+	)
+	if err != nil {
+		logger.Error("failed to create migrator", "err", err)
+		os.Exit(1)
 	}
 
 	mctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	if err := migrations.RunMigrations(mctx, pool, logger, migrationsDir); err != nil {
-		logger.Error("migration run failed", "err", err)
+	result, err := migrator.Up(mctx)
+	if err != nil {
+		logger.Error("migration run failed", "err", err, "applied", result.Versions)
 		os.Exit(1)
 	}
 
-	logger.Info("migration run complete")
+	logger.Info("migration run complete",
+		"applied", result.Versions,
+		"skipped", result.Skipped,
+		"duration", result.Duration,
+	)
 }
