@@ -4,7 +4,7 @@ set -eu
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 DB_SERVICE="${DB_SERVICE:-test_db}"
-DATABASE_URL="${DATABASE_URL:-postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disabl}"
+DATABASE_URL="${DATABASE_URL:-postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disable}"
 
 echo "Starting test database container: ${DB_SERVICE}"
 docker compose -f "${COMPOSE_FILE}" up -d "${DB_SERVICE}"
@@ -30,7 +30,7 @@ while [ "$i" -le "$ATTEMPTS" ]; do
 done
 
 echo "Running tests with DATABASE_URL=${DATABASE_URL}"
-DATABASE_URL="${DATABASE_URL}" go test ./...
+DATABASE_URL="${DATABASE_URL}" go test ./... -v
 
 docker compose -f "${COMPOSE_FILE}" stop "${DB_SERVICE}"
 docker compose -f "${COMPOSE_FILE}" rm -f "${DB_SERVICE}"

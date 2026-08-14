@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/md-talim/dhara/internal/store"
 )
 
@@ -173,6 +174,7 @@ func TestCreateTask_RunAtPast(t *testing.T) {
 
 type fakeTaskStore struct {
 	createFn            func(ctx context.Context, task *store.Task) (bool, error)
+	createTxFn          func(ctx context.Context, tx pgx.Tx, task *store.Task) (bool, error)
 	getById             func(ctx context.Context, id string) (*store.Task, error)
 	listFn              func(ctx context.Context, filter store.TaskListFilter) (tasks []store.Task, total int, err error)
 	cancelById          func(ctx context.Context, id string) (*store.Task, error)
@@ -187,6 +189,10 @@ type fakeTaskStore struct {
 
 func (f *fakeTaskStore) Create(ctx context.Context, task *store.Task) (bool, error) {
 	return f.createFn(ctx, task)
+}
+
+func (f *fakeTaskStore) CreateTx(ctx context.Context, tx pgx.Tx, task *store.Task) (bool, error) {
+	return f.createTxFn(ctx, tx, task)
 }
 
 func (f *fakeTaskStore) GetById(ctx context.Context, id string) (*store.Task, error) {

@@ -10,12 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/md-talim/dhara/internal/metrics"
 )
-
-var pgErrUniqueViolation = "23505"
 
 type Task struct {
 	ID             uuid.UUID
@@ -48,6 +45,7 @@ type TaskListFilter struct {
 
 type TaskStore interface {
 	Create(ctx context.Context, task *Task) (bool, error)
+	CreateTx(ctx context.Context, tx pgx.Tx, task *Task) (bool, error)
 	GetById(ctx context.Context, id string) (*Task, error)
 	List(ctx context.Context, filter TaskListFilter) (tasks []Task, total int, err error)
 	Cancel(ctx context.Context, id string) (*Task, error)
@@ -61,7 +59,7 @@ type TaskStore interface {
 }
 
 type PostgresTaskStore struct {
-	db      *pgxpool.Pool
+	db      DBTX
 	metrics *metrics.Metrics
 }
 
@@ -72,19 +70,51 @@ func NewTaskStore(db *pgxpool.Pool, m *metrics.Metrics) *PostgresTaskStore {
 	}
 }
 
+// Create enqueues a task in its own transaction. To insert inside a
+// caller-owned transaction (for atomicity with business logic), use CreateTx.
 func (ts *PostgresTaskStore) Create(ctx context.Context, task *Task) (bool, error) {
+	tx, err := ts.db.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	created, err := ts.CreateTx(ctx, tx, task)
+	if err != nil {
+		return false, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit tx: %w", err)
+	}
+
+	return created, nil
+}
+
+// CreateTx inserts a task inside the caller's transaction. It never commits
+// or rolls back — the caller owns the transaction, so the task is committed
+// atomically with any other writes in the same transaction.
+func (ts *PostgresTaskStore) CreateTx(ctx context.Context, tx pgx.Tx, task *Task) (bool, error) {
+	return ts.insertTask(ctx, tx, task)
+}
+
+// insertTask is the shared insert core: the INSERT, payload hashing, and the
+// idempotency replay/conflict logic all run on a single executor so the
+// conflict check happens in the same transaction as the insert.
+func (ts *PostgresTaskStore) insertTask(ctx context.Context, exec DBTX, task *Task) (bool, error) {
 	payloadHash, err := hashPayload(task.Payload) // new task payload hash
 	if err != nil {
 		return false, err
 	}
 
 	query := `
-		INSERT INTO tasks(type, payload, payload_hash, idempotency_key,  priority, max_retries, run_at)
+		INSERT INTO tasks(type, payload, payload_hash, idempotency_key, priority, max_retries, run_at)
 		VALUES($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (type, idempotency_key) DO NOTHING
 		RETURNING id, status, attempts, created_at, updated_at
 	`
 
-	err = ts.db.QueryRow(
+	err = exec.QueryRow(
 		ctx,
 		query,
 		task.Type,
@@ -96,23 +126,19 @@ func (ts *PostgresTaskStore) Create(ctx context.Context, task *Task) (bool, erro
 		task.RunAt,
 	).Scan(&task.ID, &task.Status, &task.Attempts, &task.CreatedAt, &task.UpdatedAt)
 
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == pgErrUniqueViolation {
-			if pgErr.ConstraintName == "tasks_idempotency_type_key" {
-				existingTask, err := ts.getByTypeAndIdempotencyKey(ctx, task.Type, *task.IdempotencyKey)
-				if err != nil {
-					return false, err
-				}
-				if !bytes.Equal(existingTask.PayloadHash, payloadHash) {
-					return false, ErrTaskConflict
-				}
-
-				*task = *existingTask
-				return false, nil
-			}
+	if errors.Is(err, pgx.ErrNoRows) {
+		// conflicted with an existing (type, idempotency_key) row: fetch the
+		// existing task and verify the payload matches.
+		existingTask, err := ts.getByTypeAndIdempotencyKey(ctx, exec, task.Type, *task.IdempotencyKey)
+		if err != nil {
+			return false, err
 		}
-		return false, err
+		if !bytes.Equal(existingTask.PayloadHash, payloadHash) {
+			return false, ErrTaskConflict
+		}
+
+		*task = *existingTask
+		return false, nil
 	}
 
 	ts.metrics.TasksEnqueuedTotal.Add(1)
@@ -681,7 +707,7 @@ func (ts *PostgresTaskStore) GetQueueDBMetrics(ctx context.Context) (*QueueDBMet
 	return metrics, nil
 }
 
-func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, taskType, idempotencyKey string) (*Task, error) {
+func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, exec DBTX, taskType, idempotencyKey string) (*Task, error) {
 	query := `
 		SELECT
 			id, type, payload, payload_hash, idempotency_key, status, priority, attempts, max_retries,
@@ -690,7 +716,7 @@ func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, tas
 	`
 
 	task := &Task{}
-	err := ts.db.QueryRow(ctx, query, taskType, idempotencyKey).Scan(
+	err := exec.QueryRow(ctx, query, taskType, idempotencyKey).Scan(
 		&task.ID, &task.Type, &task.Payload, &task.PayloadHash, &task.IdempotencyKey, &task.Status, &task.Priority, &task.Attempts,
 		&task.MaxRetries, &task.RunAt, &task.StartedAt, &task.CompletedAt, &task.LastError, &task.CreatedAt, &task.UpdatedAt,
 	)
