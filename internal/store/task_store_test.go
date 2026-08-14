@@ -332,7 +332,7 @@ func setupTestDB(ctx context.Context) (*pgxpool.Pool, error) {
 }
 
 func dropTables(ctx context.Context, db *pgxpool.Pool) {
-	db.Exec(ctx, `DROP TABLE IF EXISTS dead_letters, task_logs, tasks, schema_migrations CASCADE`)
+	db.Exec(ctx, `DROP TABLE IF EXISTS dead_letters, task_logs, tasks, dhara_vow_migrations CASCADE`)
 }
 
 func truncateTables(ctx context.Context, db *pgxpool.Pool) {

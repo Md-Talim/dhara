@@ -125,15 +125,16 @@ func (h *TaskHandler) HandleCreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
-	req.normalize(now)
-	if err := req.validate(now); err != nil {
+	params := req.toInsertParams()
+	params.Normalize(now)
+	if err := params.Validate(now); err != nil {
 		status = http.StatusBadRequest
 		logger.Warn("create task validation failed", "err", err)
 		writeError(w, status, err.Error())
 		return
 	}
 
-	task := req.toTask()
+	task := params.ToTask()
 	created, err := h.taskStore.Create(r.Context(), task)
 	if err != nil {
 		if errors.Is(err, store.ErrTaskConflict) {
