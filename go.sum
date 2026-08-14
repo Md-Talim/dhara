@@ -13,6 +13,8 @@ github.com/jackc/puddle/v2 v2.2.2 h1:PR8nw+E/1w0GLuRFSmiioY6UooMp6KJv0/61nB7icHo
 github.com/jackc/puddle/v2 v2.2.2/go.mod h1:vriiEXHvEE654aYKXXjOvZM39qJ0q+azkZFrfEOc3H4=
 github.com/md-talim/vow v0.1.0 h1:KX+5Ud1iSHvbt/BDDUi3DgLdD4VR4c4DmPOD09WsilM=
 github.com/md-talim/vow v0.1.0/go.mod h1:Gv95OLd/Y+XqZD060kWyUEuSNHyvztd9yeOQ/mbd7dM=
+github.com/md-talim/vow v0.1.1 h1:8xrOsDOrrDjLP+8Dv7EaXGzg3alkPMJgRtxNCZ7K6iQ=
+github.com/md-talim/vow v0.1.1/go.mod h1:Gv95OLd/Y+XqZD060kWyUEuSNHyvztd9yeOQ/mbd7dM=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
