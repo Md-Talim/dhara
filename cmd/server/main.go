@@ -21,17 +21,22 @@ func main() {
 func run() int {
 	start := time.Now()
 
-	cfg, err := config.NewFromEnv()
-	if err != nil {
+	dbCfg := config.NewDatabaseConfig()
+	migCfg := config.NewMigrationsConfig()
+	serverCfg := config.NewServerConfig()
+	shutdownCfg := config.NewShutdownConfig()
+	logCfg := config.NewLoggingConfig()
+
+	if err := config.Load(dbCfg, migCfg, serverCfg, shutdownCfg, logCfg); err != nil {
 		return fail(err)
 	}
 
-	logger := logging.New(cfg.LogFormat, cfg.LogLevel)
+	logger := logging.New(logCfg.Format, logCfg.Level)
 	application, err := app.NewApplication(app.AppDependencies{
 		StartTime:     start,
 		Logger:        logger,
-		AutoMigrate:   cfg.AutoMigrate,
-		MigrationsDir: cfg.MigrationsDir,
+		AutoMigrate:   migCfg.AutoMigrate,
+		MigrationsDir: migCfg.MigrationsDir,
 	})
 	if err != nil {
 		logger.Error("failed to build application", "err", err)
@@ -42,7 +47,7 @@ func run() int {
 	defer stop()
 
 	server := &http.Server{
-		Addr:              ":" + strconv.Itoa(cfg.Port),
+		Addr:              ":" + strconv.Itoa(serverCfg.Port),
 		Handler:           application.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -59,7 +64,7 @@ func run() int {
 
 	logger.Info("shutdown signal received")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownCfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {

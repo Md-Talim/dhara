@@ -30,6 +30,7 @@ type AppDependencies struct {
 	StartTime     time.Time
 	Logger        *slog.Logger
 	AutoMigrate   bool
+	DatabaseURL   string
 	MigrationsDir string
 }
 
@@ -38,7 +39,7 @@ func NewApplication(deps AppDependencies) (*Application, error) {
 		deps.Logger = slog.Default()
 	}
 
-	pool, err := openDB()
+	pool, err := openDB(deps.DatabaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -107,10 +108,10 @@ func (app *Application) Routes() *http.ServeMux {
 	return mux
 }
 
-func openDB() (*pgxpool.Pool, error) {
+func openDB(databaseURL string) (*pgxpool.Pool, error) {
 	ctx := context.Background()
 
-	pool, err := db.Open(ctx)
+	pool, err := db.Open(ctx, databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create db pool: %w", err)
 	}

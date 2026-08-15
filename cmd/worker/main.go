@@ -22,27 +22,32 @@ func main() {
 }
 
 func run() int {
-	cfg, err := config.NewFromEnv()
-	if err != nil {
+	dbCfg := config.NewDatabaseConfig()
+	migCfg := config.NewMigrationsConfig()
+	workerCfg := config.NewWorkerConfig()
+	shutdownCfg := config.NewShutdownConfig()
+	logCfg := config.NewLoggingConfig()
+
+	if err := config.Load(dbCfg, migCfg, workerCfg, shutdownCfg, logCfg); err != nil {
 		os.Stderr.WriteString(err.Error() + "\n")
 		return 1
 	}
 
-	logger := logging.New(cfg.LogFormat, cfg.LogLevel)
+	logger := logging.New(logCfg.Format, logCfg.Level)
 	registry := tasks.NewDemoRegistry()
 
-	pool, err := db.Open(context.Background())
+	pool, err := db.Open(context.Background(), dbCfg.URL)
 	if err != nil {
 		logger.Error("failed to open database", "err", err)
 		return 1
 	}
 	defer pool.Close()
 
-	if cfg.AutoMigrate {
+	if migCfg.AutoMigrate {
 		mctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		migrator, err := vow.New(pool, os.DirFS(cfg.MigrationsDir),
+		migrator, err := vow.New(pool, os.DirFS(migCfg.MigrationsDir),
 			vow.WithTableName("dhara_vow_migrations"),
 			vow.WithLockName("dhara_vow_lock"),
 			vow.WithLogger(logger),
@@ -64,15 +69,15 @@ func run() int {
 	taskStore := store.NewTaskStore(pool, m)
 
 	workerSettings := queue.Settings{
-		WorkerPrefix:      cfg.WorkerPrefix,
-		Concurrency:       cfg.WorkerCount,
-		PollInterval:      cfg.PollInterval,
-		HeartbeatInterval: cfg.HeartbeatInterval,
-		HandlerTimeout:    cfg.HandlerTimeout,
-		BaseBackoff:       cfg.BaseBackoff,
-		MaxBackoff:        cfg.MaxBackoff,
-		ReaperInterval:    cfg.ReaperInterval,
-		StaleThreshold:    cfg.StuckThreshold,
+		WorkerPrefix:      workerCfg.WorkerPrefix,
+		Concurrency:       workerCfg.WorkerCount,
+		PollInterval:      workerCfg.PollInterval,
+		HeartbeatInterval: workerCfg.HeartbeatInterval,
+		HandlerTimeout:    workerCfg.HandlerTimeout,
+		BaseBackoff:       workerCfg.BaseBackoff,
+		MaxBackoff:        workerCfg.MaxBackoff,
+		ReaperInterval:    workerCfg.ReaperInterval,
+		StaleThreshold:    workerCfg.StuckThreshold,
 	}
 	wp := queue.NewWorkerPool(taskStore, registry, logger, workerSettings, m)
 
@@ -84,7 +89,7 @@ func run() int {
 	<-ctx.Done()
 	logger.Info("shutdown signal received")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownCfg.ShutdownTimeout)
 	defer cancel()
 
 	wp.Stop()

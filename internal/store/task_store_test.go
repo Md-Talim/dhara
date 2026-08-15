@@ -309,9 +309,7 @@ func TestGetTaskById_NotFound(t *testing.T) {
 }
 
 func setupTestDB(ctx context.Context) (*pgxpool.Pool, error) {
-	os.Setenv("DHARA_DATABASE_URL", "postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disable")
-
-	pool, err := db.Open(ctx)
+	pool, err := db.Open(ctx, "postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disable")
 	if err != nil {
 		return nil, err
 	}
