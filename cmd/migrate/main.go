@@ -2,55 +2,82 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 
+	"github.com/md-talim/dhara"
 	"github.com/md-talim/dhara/internal/config"
 	"github.com/md-talim/dhara/internal/db"
-	"github.com/md-talim/vow"
 )
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	ctx := context.Background()
+	slog.SetDefault(logger)
+
+	if err := run(logger); err != nil {
+		logger.Error("migration failed", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run(logger *slog.Logger) error {
+	args := os.Args[1:]
+
+	direction := "up"
+	steps := 1
+	if len(args) > 0 {
+		switch args[0] {
+		case "up":
+		case "down":
+			direction = "down"
+			if len(args) > 1 {
+				n, err := strconv.Atoi(args[1])
+				if err != nil || n < 1 {
+					return fmt.Errorf("invalid step count %q: must be a positive integer", args[1])
+				}
+				steps = n
+			}
+		default:
+			return fmt.Errorf("unknown command %q\n\nusage:\n  dhara-migrate [up]      apply all pending migrations (default)\n  dhara-migrate down [N]  roll back N migrations (default 1)", args[0])
+		}
+	}
 
 	dbCfg := config.NewDatabaseConfig()
-	migCfg := config.NewMigrationsConfig()
-	if err := config.Load(dbCfg, migCfg); err != nil {
-		logger.Error("invalid config", "err", err)
-		os.Exit(1)
+	if err := config.Load(dbCfg); err != nil {
+		return err
 	}
 
+	ctx := context.Background()
 	pool, err := db.Open(ctx, dbCfg.URL)
 	if err != nil {
-		logger.Error("failed to create db pool", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to create db pool: %w", err)
 	}
 	defer pool.Close()
-
-	migrator, err := vow.New(pool, os.DirFS("migrations"),
-		vow.WithTableName("dhara_vow_migrations"),
-		vow.WithLockName("dhara_vow_lock"),
-		vow.WithLogger(logger),
-	)
-	if err != nil {
-		logger.Error("failed to create migrator", "err", err)
-		os.Exit(1)
-	}
 
 	mctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	result, err := migrator.Up(mctx)
-	if err != nil {
-		logger.Error("migration run failed", "err", err, "applied", result.Versions)
-		os.Exit(1)
+	if direction == "up" {
+		res, err := dhara.Migrate(mctx, pool)
+		if err != nil {
+			return err
+		}
+		logger.Info("migration run complete",
+			"applied", res.Versions,
+			"skipped", res.Skipped,
+		)
+		return nil
 	}
 
-	logger.Info("migration run complete",
-		"applied", result.Versions,
-		"skipped", result.Skipped,
-		"duration", result.Duration,
+	res, err := dhara.MigrateDown(mctx, pool, steps)
+	if err != nil {
+		return err
+	}
+	logger.Info("rollback run complete",
+		"rolled_back", res.Versions,
 	)
+	return nil
 }

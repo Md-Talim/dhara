@@ -13,13 +13,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/md-talim/dhara/internal/store"
+	"github.com/md-talim/dhara"
 )
 
 func TestCreateTask_InvalidJSON(t *testing.T) {
-	store := &fakeTaskStore{}
-	h := NewTaskHandler(store, slog.Default())
+	h := NewTaskHandler(&fakeTaskClient{}, slog.Default())
 
 	req := newRequest(`{invalid}`)
 	rr := httptest.NewRecorder()
@@ -27,13 +25,12 @@ func TestCreateTask_InvalidJSON(t *testing.T) {
 	h.HandleCreateTask(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got	%d", rr.Code)
+		t.Fatalf("expected 400, got %d", rr.Code)
 	}
 }
 
 func TestCreateTask_ValidationError(t *testing.T) {
-	store := &fakeTaskStore{}
-	h := NewTaskHandler(store, slog.Default())
+	h := NewTaskHandler(&fakeTaskClient{}, slog.Default())
 
 	req := newRequest(`{"type": ""}`)
 	rr := httptest.NewRecorder()
@@ -41,21 +38,30 @@ func TestCreateTask_ValidationError(t *testing.T) {
 	h.HandleCreateTask(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got	%d", rr.Code)
+		t.Fatalf("expected 400, got %d", rr.Code)
 	}
 }
 
 func TestCreateTask_Created(t *testing.T) {
-	store := &fakeTaskStore{
-		createFn: func(ctx context.Context, task *store.Task) (bool, error) {
-			task.ID = uuid.New()
-			task.Status = "PENDING"
-			task.CreatedAt = time.Now()
-			task.UpdatedAt = time.Now()
-			return true, nil
+	client := &fakeTaskClient{
+		insertFn: func(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error) {
+			now := time.Now()
+			return &dhara.EnqueueResult{
+				Task: &dhara.Task{
+					ID:         uuid.New(),
+					Type:       params.Type,
+					Status:     dhara.TaskStatusPending,
+					Priority:   *params.Priority,
+					MaxRetries: *params.MaxRetries,
+					RunAt:      *params.RunAt,
+					CreatedAt:  now,
+					UpdatedAt:  now,
+				},
+				Duplicate: false,
+			}, nil
 		},
 	}
-	h := NewTaskHandler(store, slog.Default())
+	h := NewTaskHandler(client, slog.Default())
 
 	req := newRequest(`{"type": "send_email"}`)
 	rr := httptest.NewRecorder()
@@ -63,7 +69,7 @@ func TestCreateTask_Created(t *testing.T) {
 	h.HandleCreateTask(rr, req)
 
 	if rr.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got	%d", rr.Code)
+		t.Fatalf("expected 201, got %d", rr.Code)
 	}
 
 	resp := decodeResponse(t, rr)
@@ -73,14 +79,22 @@ func TestCreateTask_Created(t *testing.T) {
 }
 
 func TestCreateTask_IdempotentReplay(t *testing.T) {
-	store := &fakeTaskStore{
-		createFn: func(ctx context.Context, task *store.Task) (bool, error) {
-			task.ID = uuid.New()
-			return false, nil
+	client := &fakeTaskClient{
+		insertFn: func(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error) {
+			return &dhara.EnqueueResult{
+				Task: &dhara.Task{
+					ID:        uuid.New(),
+					Type:      params.Type,
+					Status:    dhara.TaskStatusPending,
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+				},
+				Duplicate: true,
+			}, nil
 		},
 	}
 
-	h := NewTaskHandler(store, slog.Default())
+	h := NewTaskHandler(client, slog.Default())
 
 	req := newRequest(`{"type": "send_email"}`)
 	rr := httptest.NewRecorder()
@@ -93,13 +107,13 @@ func TestCreateTask_IdempotentReplay(t *testing.T) {
 }
 
 func TestCreateTask_Conflict(t *testing.T) {
-	store := &fakeTaskStore{
-		createFn: func(ctx context.Context, task *store.Task) (bool, error) {
-			return false, store.ErrTaskConflict
+	client := &fakeTaskClient{
+		insertFn: func(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error) {
+			return nil, dhara.ErrTaskConflict
 		},
 	}
 
-	h := NewTaskHandler(store, slog.Default())
+	h := NewTaskHandler(client, slog.Default())
 
 	req := newRequest(`{"type": "send_email"}`)
 	rr := httptest.NewRecorder()
@@ -112,13 +126,13 @@ func TestCreateTask_Conflict(t *testing.T) {
 }
 
 func TestCreateTask_InternalError(t *testing.T) {
-	store := &fakeTaskStore{
-		createFn: func(ctx context.Context, task *store.Task) (bool, error) {
-			return false, errors.New("db down")
+	client := &fakeTaskClient{
+		insertFn: func(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error) {
+			return nil, errors.New("db down")
 		},
 	}
 
-	h := NewTaskHandler(store, slog.Default())
+	h := NewTaskHandler(client, slog.Default())
 
 	req := newRequest(`{"type": "send_email"}`)
 	rr := httptest.NewRecorder()
@@ -131,19 +145,22 @@ func TestCreateTask_InternalError(t *testing.T) {
 }
 
 func TestCreateTask_DefaultsApplied(t *testing.T) {
-	store := &fakeTaskStore{
-		createFn: func(ctx context.Context, task *store.Task) (bool, error) {
-			if task.Priority != 0 {
+	client := &fakeTaskClient{
+		insertFn: func(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error) {
+			if *params.Priority != 0 {
 				t.Fatalf("expected default priority 0")
 			}
-			if task.MaxRetries != 5 {
+			if *params.MaxRetries != 5 {
 				t.Fatalf("expected default retries 5")
 			}
-			return true, nil
+			return &dhara.EnqueueResult{
+				Task:      &dhara.Task{ID: uuid.New(), Type: params.Type},
+				Duplicate: false,
+			}, nil
 		},
 	}
 
-	h := NewTaskHandler(store, slog.Default())
+	h := NewTaskHandler(client, slog.Default())
 
 	req := newRequest(`{"type": "send_email"}`)
 	rr := httptest.NewRecorder()
@@ -159,8 +176,7 @@ func TestCreateTask_RunAtPast(t *testing.T) {
 		"run_at": "%s"
 	}`, past)
 
-	store := &fakeTaskStore{}
-	h := NewTaskHandler(store, slog.Default())
+	h := NewTaskHandler(&fakeTaskClient{}, slog.Default())
 
 	req := newRequest(body)
 	rr := httptest.NewRecorder()
@@ -172,73 +188,47 @@ func TestCreateTask_RunAtPast(t *testing.T) {
 	}
 }
 
-type fakeTaskStore struct {
-	createFn            func(ctx context.Context, task *store.Task) (bool, error)
-	createTxFn          func(ctx context.Context, tx pgx.Tx, task *store.Task) (bool, error)
-	getById             func(ctx context.Context, id string) (*store.Task, error)
-	listFn              func(ctx context.Context, filter store.TaskListFilter) (tasks []store.Task, total int, err error)
-	cancelById          func(ctx context.Context, id string) (*store.Task, error)
-	claim               func(ctx context.Context, workerID string) (*store.Task, error)
-	heartbeat           func(ctx context.Context, taskID, workerID string) error
-	markCompleted       func(ctx context.Context, taskID string) error
-	markPending         func(ctx context.Context, task *store.Task, lastError string, runAt time.Time) error
-	markDead            func(ctx context.Context, taskID, workerID, lastError string) error
-	retryDead           func(ctx context.Context, taskID string) (*store.Task, error)
-	requeueStaleRunning func(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error)
+type fakeTaskClient struct {
+	insertFn    func(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error)
+	getTaskFn   func(ctx context.Context, id string) (*dhara.Task, error)
+	listTasksFn func(ctx context.Context, filter dhara.ListFilter) ([]dhara.Task, int, error)
+	cancelFn    func(ctx context.Context, id string) (*dhara.Task, error)
+	retryFn     func(ctx context.Context, id string) (*dhara.Task, error)
 }
 
-func (f *fakeTaskStore) Create(ctx context.Context, task *store.Task) (bool, error) {
-	return f.createFn(ctx, task)
+func (f *fakeTaskClient) Insert(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error) {
+	if f.insertFn != nil {
+		return f.insertFn(ctx, params)
+	}
+	return nil, errors.New("insert not implemented")
 }
 
-func (f *fakeTaskStore) CreateTx(ctx context.Context, tx pgx.Tx, task *store.Task) (bool, error) {
-	return f.createTxFn(ctx, tx, task)
+func (f *fakeTaskClient) GetTask(ctx context.Context, id string) (*dhara.Task, error) {
+	if f.getTaskFn != nil {
+		return f.getTaskFn(ctx, id)
+	}
+	return nil, dhara.ErrTaskNotFound
 }
 
-func (f *fakeTaskStore) GetById(ctx context.Context, id string) (*store.Task, error) {
-	return f.getById(ctx, id)
-}
-
-func (f *fakeTaskStore) List(ctx context.Context, filter store.TaskListFilter) ([]store.Task, int, error) {
-	if f.listFn != nil {
-		return f.listFn(ctx, filter)
+func (f *fakeTaskClient) ListTasks(ctx context.Context, filter dhara.ListFilter) ([]dhara.Task, int, error) {
+	if f.listTasksFn != nil {
+		return f.listTasksFn(ctx, filter)
 	}
 	return nil, 0, nil
 }
 
-func (f *fakeTaskStore) Cancel(ctx context.Context, id string) (*store.Task, error) {
-	return f.cancelById(ctx, id)
-}
-
-func (f *fakeTaskStore) Claim(ctx context.Context, workerID string) (*store.Task, error) {
-	return f.claim(ctx, workerID)
-}
-
-func (f *fakeTaskStore) Heartbeat(ctx context.Context, taskID, workerID string) error {
-	return f.heartbeat(ctx, taskID, workerID)
-}
-
-func (f *fakeTaskStore) MarkCompleted(ctx context.Context, taskID, workerID string, durationMS int64) error {
-	return f.markCompleted(ctx, taskID)
-}
-
-func (f *fakeTaskStore) MarkPending(ctx context.Context, task *store.Task, workerID, lastError string, runAt time.Time) error {
-	return f.markPending(ctx, task, lastError, runAt)
-}
-
-func (f *fakeTaskStore) MarkDead(ctx context.Context, taskID, workerID, lastError, reason string) error {
-	return f.markDead(ctx, taskID, workerID, lastError)
-}
-
-func (f *fakeTaskStore) RetryDead(ctx context.Context, taskID string) (*store.Task, error) {
-	if f.retryDead != nil {
-		return f.retryDead(ctx, taskID)
+func (f *fakeTaskClient) CancelTask(ctx context.Context, id string) (*dhara.Task, error) {
+	if f.cancelFn != nil {
+		return f.cancelFn(ctx, id)
 	}
-	return nil, nil
+	return nil, dhara.ErrTaskNotFound
 }
 
-func (f *fakeTaskStore) RequeueStaleRunning(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error) {
-	return f.requeueStaleRunning(ctx, staleThreshold, reaperID)
+func (f *fakeTaskClient) RetryTask(ctx context.Context, id string) (*dhara.Task, error) {
+	if f.retryFn != nil {
+		return f.retryFn(ctx, id)
+	}
+	return nil, dhara.ErrTaskNotFound
 }
 
 func newRequest(body string) *http.Request {

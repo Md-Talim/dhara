@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -9,16 +10,28 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/md-talim/dhara"
 	"github.com/md-talim/dhara/internal/store"
 )
 
-type TaskHandler struct {
-	taskStore store.TaskStore
-	logger    *slog.Logger
+// TaskClient is the subset of *dhara.Client the API needs. It exists so the
+// handlers stay unit-testable; production wires in the real client, so every
+// task-state code path in the server goes through the library.
+type TaskClient interface {
+	Insert(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error)
+	GetTask(ctx context.Context, id string) (*dhara.Task, error)
+	ListTasks(ctx context.Context, filter dhara.ListFilter) ([]dhara.Task, int, error)
+	CancelTask(ctx context.Context, id string) (*dhara.Task, error)
+	RetryTask(ctx context.Context, id string) (*dhara.Task, error)
 }
 
-func NewTaskHandler(taskStore store.TaskStore, logger *slog.Logger) *TaskHandler {
-	return &TaskHandler{taskStore: taskStore, logger: logger}
+type TaskHandler struct {
+	client TaskClient
+	logger *slog.Logger
+}
+
+func NewTaskHandler(client TaskClient, logger *slog.Logger) *TaskHandler {
+	return &TaskHandler{client: client, logger: logger}
 }
 
 func (h *TaskHandler) HandleListTasks(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +85,7 @@ func (h *TaskHandler) HandleListTasks(w http.ResponseWriter, r *http.Request) {
 		filter.Offset = n
 	}
 
-	tasks, total, err := h.taskStore.List(r.Context(), filter)
+	tasks, total, err := h.client.ListTasks(r.Context(), filter)
 	if err != nil {
 		status = http.StatusInternalServerError
 		logger.Error("failed to list tasks",
@@ -134,28 +147,28 @@ func (h *TaskHandler) HandleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task := params.ToTask()
-	created, err := h.taskStore.Create(r.Context(), task)
+	result, err := h.client.Insert(r.Context(), *params)
 	if err != nil {
-		if errors.Is(err, store.ErrTaskConflict) {
+		if errors.Is(err, dhara.ErrTaskConflict) {
 			status = http.StatusConflict
-			logger.Warn("idempotency key conflict", "task_type", task.Type, "idempotency_key", task.IdempotencyKey)
+			logger.Warn("idempotency key conflict", "task_type", params.Type, "idempotency_key", params.IdempotencyKey)
 			writeError(w, status, "idempotency key reused with different payload")
 			return
 		}
 		status = http.StatusInternalServerError
-		logger.Error("failed to create task", "err", err, "task_type", task.Type, "idempotency_key", task.IdempotencyKey)
+		logger.Error("failed to create task", "err", err, "task_type", params.Type, "idempotency_key", params.IdempotencyKey)
 		writeError(w, status, "failed to create task")
 		return
 	}
 
-	if !created {
+	if result.Duplicate {
 		status = http.StatusOK
-		logger.Info("task create idempotent replay", "task_id", task.ID.String(), "task_type", task.Type)
+		logger.Info("task create idempotent replay", "task_id", result.Task.ID.String(), "task_type", result.Task.Type)
 	} else {
-		logger.Info("task created", "task_id", task.ID.String(), "task_type", task.Type)
+		status = http.StatusCreated
+		logger.Info("task created", "task_id", result.Task.ID.String(), "task_type", result.Task.Type)
 	}
-	writeJSON(w, status, newTaskResponse(task))
+	writeJSON(w, status, newTaskResponse(result.Task))
 }
 
 func (h *TaskHandler) HandleGetTaskById(w http.ResponseWriter, r *http.Request) {
@@ -173,16 +186,16 @@ func (h *TaskHandler) HandleGetTaskById(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	task, err := h.taskStore.GetById(r.Context(), id.String())
+	task, err := h.client.GetTask(r.Context(), id.String())
 	if err != nil {
+		if errors.Is(err, dhara.ErrTaskNotFound) {
+			status = http.StatusNotFound
+			writeError(w, status, "task not found")
+			return
+		}
 		status = http.StatusInternalServerError
 		logger.Error("failed to get task by id", "err", err, "task_id", id.String())
 		writeError(w, status, "failed to get task")
-		return
-	}
-	if task == nil {
-		status = http.StatusNotFound
-		writeError(w, status, "task not found")
 		return
 	}
 
@@ -209,9 +222,9 @@ func (h *TaskHandler) HandleDeleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.taskStore.Cancel(r.Context(), id.String())
+	task, err := h.client.CancelTask(r.Context(), id.String())
 	if err != nil {
-		if errors.Is(err, store.ErrTaskNotFound) {
+		if errors.Is(err, dhara.ErrTaskNotFound) {
 			status = http.StatusNotFound
 			writeError(w, status, "task not found")
 			return
@@ -256,14 +269,14 @@ func (h *TaskHandler) HandleRetryDeadTask(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	task, err := h.taskStore.RetryDead(r.Context(), id.String())
+	task, err := h.client.RetryTask(r.Context(), id.String())
 	if err != nil {
-		if errors.Is(err, store.ErrTaskNotFound) {
+		if errors.Is(err, dhara.ErrTaskNotFound) {
 			status = http.StatusNotFound
 			writeError(w, status, "task not found")
 			return
 		}
-		if errors.Is(err, store.ErrTaskNotDead) {
+		if errors.Is(err, dhara.ErrTaskNotDead) {
 			status = http.StatusConflict
 			logger.Warn("task rejected for non-dead task", "task_id", id.String())
 			writeError(w, status, "task is not in DEAD status")
@@ -275,7 +288,6 @@ func (h *TaskHandler) HandleRetryDeadTask(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	status = http.StatusOK
 	logger.Info("task retry requested", "task_id", task.ID.String(), "task_status", task.Status, "attempts", task.Attempts)
 	writeJSON(w, http.StatusOK, newTaskResponse(task))
 }

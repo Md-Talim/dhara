@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/md-talim/dhara/internal/store"
+	"github.com/md-talim/dhara"
 )
 
 type taskResponse struct {
@@ -23,30 +23,20 @@ type taskResponse struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
-func newTaskResponse(t *store.Task) taskResponse {
-	r := taskResponse{
-		ID:          t.ID,
-		Type:        t.Type,
-		Status:      t.Status,
-		Attempts:    t.Attempts,
-		MaxRetries:  t.MaxRetries,
-		RunAt:       t.RunAt,
-		StartedAt:   t.StartedAt,
-		CompletedAt: t.CompletedAt,
-		CreatedAt:   t.CreatedAt,
-		UpdatedAt:   t.UpdatedAt,
+func newTaskResponse(t *dhara.Task) taskResponse {
+	return taskResponse{
+		ID:             t.ID,
+		Type:           t.Type,
+		Status:         string(t.Status),
+		Priority:       t.Priority,
+		Attempts:       t.Attempts,
+		MaxRetries:     t.MaxRetries,
+		RunAt:          t.RunAt,
+		IdempotencyKey: t.IdempotencyKey,
+		StartedAt:      t.StartedAt,
+		CompletedAt:    t.CompletedAt,
+		LastError:      t.LastError,
+		CreatedAt:      t.CreatedAt,
+		UpdatedAt:      t.UpdatedAt,
 	}
-
-	if t.LastError != nil {
-		switch t.Status {
-		case "DEAD", "RUNNING":
-			r.LastError = t.LastError
-		case "PENDING":
-			if t.Attempts > 0 {
-				r.LastError = t.LastError
-			}
-		}
-	}
-
-	return r
 }

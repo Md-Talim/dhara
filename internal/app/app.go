@@ -5,16 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/md-talim/dhara"
 	"github.com/md-talim/dhara/internal/api"
 	"github.com/md-talim/dhara/internal/db"
-	"github.com/md-talim/dhara/internal/metrics"
-	"github.com/md-talim/dhara/internal/queue"
-	"github.com/md-talim/dhara/internal/store"
-	"github.com/md-talim/vow"
 )
 
 type Application struct {
@@ -23,15 +19,13 @@ type Application struct {
 	healthHandler  *api.HealthHandler
 	taskHandler    *api.TaskHandler
 	metricsHandler *api.MetricsHandler
-	workerPool     *queue.WorkerPool
 }
 
 type AppDependencies struct {
-	StartTime     time.Time
-	Logger        *slog.Logger
-	AutoMigrate   bool
-	DatabaseURL   string
-	MigrationsDir string
+	StartTime   time.Time
+	Logger      *slog.Logger
+	AutoMigrate bool
+	DatabaseURL string
 }
 
 func NewApplication(deps AppDependencies) (*Application, error) {
@@ -39,37 +33,26 @@ func NewApplication(deps AppDependencies) (*Application, error) {
 		deps.Logger = slog.Default()
 	}
 
-	pool, err := openDB(deps.DatabaseURL)
+	pool, err := db.Open(context.Background(), deps.DatabaseURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create db pool: %w", err)
 	}
 
 	if deps.AutoMigrate {
 		mctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-
-		migrator, err := vow.New(pool, os.DirFS(deps.MigrationsDir),
-			vow.WithTableName("dhara_vow_migrations"),
-			vow.WithLockName("dhara_vow_lock"),
-			vow.WithLogger(deps.Logger),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create migrator: %w", err)
-		}
-
-		result, err := migrator.Up(mctx)
+		result, err := dhara.Migrate(mctx, pool)
 		if err != nil {
 			return nil, fmt.Errorf("failed to run migrations: %w", err)
 		}
-		deps.Logger.Info("migrations applied", "applied", result.Versions, slog.Duration("duration", result.Duration))
+		deps.Logger.Info("migrations applied", "applied", result.Versions, "skipped", result.Skipped)
 	}
 
-	m := metrics.New()
-	taskStore := store.NewTaskStore(pool, m)
+	client := dhara.NewClient(pool)
 
 	healthHandler := api.NewHealthHandler(deps.StartTime, pool)
-	taskHandler := api.NewTaskHandler(taskStore, deps.Logger)
-	metricsHandler := api.NewMetricsHandler(taskStore, m)
+	taskHandler := api.NewTaskHandler(client, deps.Logger)
+	metricsHandler := api.NewMetricsHandler(client)
 
 	return &Application{
 		db:             pool,
@@ -85,7 +68,6 @@ func (a *Application) Shutdown(ctx context.Context) error {
 		a.db.Close()
 		a.db = nil
 	}
-
 	return nil
 }
 
@@ -106,15 +88,4 @@ func (app *Application) Routes() *http.ServeMux {
 	mux.Handle("GET /metrics", app.metricsHandler)
 
 	return mux
-}
-
-func openDB(databaseURL string) (*pgxpool.Pool, error) {
-	ctx := context.Background()
-
-	pool, err := db.Open(ctx, databaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create db pool: %w", err)
-	}
-
-	return pool, nil
 }

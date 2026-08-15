@@ -22,6 +22,11 @@ func NewRegistry(handlers map[string]HandlerFunc) *MapRegistry {
 	return &MapRegistry{handlers: handlers}
 }
 
+// Add registers (or overwrites) a handler for a task type.
+func (r *MapRegistry) Add(taskType string, handler HandlerFunc) {
+	r.handlers[taskType] = handler
+}
+
 func (r *MapRegistry) Get(taskType string) (HandlerFunc, bool) {
 	handler, ok := r.handlers[taskType]
 	return handler, ok
