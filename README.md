@@ -4,13 +4,18 @@
 
 # dhara
 
-**Dhara** is a lightweight, production-focused distributed task queue implementation in Go and backed by PostgreSQL. Designed for simplicity, reliability, and high visibility, Dhara handles the complete task queue lifecycle without requiring heavy external dependencies like Redis or RabbitMQ.
+**Dhara** is a lightweight, production-focused distributed task queue library and service for Go, backed by PostgreSQL. Designed for simplicity, reliability, and high visibility, Dhara handles the complete task queue lifecycle without requiring heavy external dependencies like Redis or RabbitMQ.
 
-[Quick Start](#quick-start) • [Architecture](#architecture-and-task-lifecycle) • [Configuration](#configuration) • [API Reference](#api--observability-reference)
+Use it two ways:
+
+- **As an embeddable library:** call `client.Enqueue(...)` from your application (even inside your own DB transaction) and run a `dhara.Worker` to execute tasks.
+- **As pre-built services:** `cmd/server` (HTTP API) and `cmd/worker` (task processor) are thin binaries assembled entirely from the library, so they can never drift from it.
+
+[Quick Start](#quick-start) • [Migrations](#migrations) • [Architecture](#architecture-and-task-lifecycle) • [Configuration](#configuration) • [API Reference](#api--observability-reference)
 
 ## Engineering Highlights & Architectural Decisions
 
-This project is build from scratch to demonstrate production-grade Go patterns, reliable system design, and strict transactional guarantees.
+This project is built from scratch to demonstrate production-grade Go patterns, reliable system design, and strict transactional guarantees.
 
 1. **Atomic Concurrency with PostgreSQL (`SKIP LOCKED`)**
 
@@ -31,7 +36,11 @@ This project is build from scratch to demonstrate production-grade Go patterns, 
 
     To prevent the "thundering herd" problem when retrying failed tasks, Dhara implements an exponential backoff retry algorithm augmented with **Full Jitter**. This spreads out retry attempts randomly across a safe window, protecting downstream databases and services from traffic spikes.
 
-4. **Zero-Dependency & Clean Architecture:** **Standard Library Routing**
+4. **Transactional Enqueue (`InsertTx`)**
+
+    Tasks can be inserted inside the caller's transaction, so a task is committed atomically with the business writes that produced it; the task never exists without its trigger, and never survives a rollback. Idempotency is enforced with `INSERT ... ON CONFLICT DO NOTHING` so a conflicting replay never aborts the caller's transaction.
+
+5. **Zero-Dependency & Clean Architecture: Standard Library Routing**
 
     Implements standard HTTP routing using Go 1.22's enhanced standard library `http.ServeMux`, keeping the binary footprint small and eliminating external framework bloat.
 
@@ -50,7 +59,7 @@ Dhara uses PostgreSQL as the single source of truth for task state and execution
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING : Task Created via API
+    [*] --> PENDING : Task Created (API / Client)
     PENDING --> RUNNING : Claimed by Worker (SKIP LOCKED)
     RUNNING --> COMPLETED : Execution Success
     RUNNING --> PENDING : Execution Failure / Stale Heartbeat (Retry with Jitter)
@@ -61,78 +70,248 @@ stateDiagram-v2
 
 ## Quick Start
 
-Prerequisites: Go 1.26+, Docker & Docker compose
+Prerequisites: Go 1.26+, Docker & Docker compose.
 
-1. **Spin up the Database**
+### Option A: Use it as a library in your own app
 
-    Start a local PostgreSQL instance:
+```bash
+go get github.com/md-talim/dhara
+```
 
-    ```bash
-    docker compose up db -d
-    ```
+**1. Create a client and enqueue tasks.** A `Client` is lightweight and safe to construct anywhere (web handlers, background jobs, migrations). It starts zero goroutines.
 
-2. **Set Up Environment & Run**
+```go
+package main
 
-    Dhara consists of two separate binaries: the **Server** (API) and the **Worker** (Task Processor). You can run them independently:
+import (
+	"context"
+	"fmt"
+	"log"
 
-    ```bash
-    export DHARA_DATABASE_URL="postgres://dhara:dhara@localhost:5432/dhara?sslmode=disable"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/md-talim/dhara"
+)
 
-    # Start the API Server
-    go run ./cmd/server &
+type EmailPayload struct {
+	To      string `json:"to"`
+	Subject string `json:"subject"`
+}
 
-    # Start the Worker Process
-    go run ./cmd/worker &
-    ```
+func main() {
+	ctx := context.Background()
 
-3. **Interact with the Queue**
+	pool, err := pgxpool.New(ctx, "postgres://dhara:dhara@localhost:5432/dhara?sslmode=disable")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer pool.Close() // you own the pool; the library never closes it
 
-    **Create a task:**
+	// Apply migrations (embedded in the library, no MIGRATIONS_DIR needed)
+	if _, err := dhara.Migrate(ctx, pool); err != nil {
+		log.Fatal(err)
+	}
 
-    ```bash
-    curl -X POST http://localhost:8080/api/v1/tasks \
-    -H "Content-Type: application/json" \
-    -d '{"type":"echo","payload":{"message":"Hello, Dhara!"}}'
-    ```
+	client := dhara.NewClient(pool)
 
-    **List active tasks:**
+	// Enqueue standalone, auto-wraps in its own transaction
+	res, err := client.Enqueue(ctx, "send_email", EmailPayload{
+		To:      "user@example.com",
+		Subject: "Welcome!",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("created task %s (duplicate=%v)\n", res.Task.ID, res.Duplicate)
+}
+```
 
-    ```bash
-    curl "http://localhost:8080/api/v1/tasks?limit=20"
-    ```
+**2. Enqueue atomically inside your own transaction.** The task is committed only if the surrounding transaction commits. Roll back the `tx` and the task never exists.
 
-4. To register custom task types, see [Adding custom task types](#adding-custom-task-types).
+```go
+tx, err := pool.Begin(ctx)
+if err != nil {
+	log.Fatal(err)
+}
+
+// Your business logic...
+if _, err := tx.Exec(ctx, `INSERT INTO orders (id, total) VALUES ($1, $2)`, orderID, 42.00); err != nil {
+	_ = tx.Rollback(ctx)
+	log.Fatal(err)
+}
+
+// Task + order commit atomically
+res, err := client.EnqueueTx(ctx, tx, "send_email", EmailPayload{
+	To:      "user@example.com",
+	Subject: "Order #" + orderID,
+})
+if err != nil {
+	_ = tx.Rollback(ctx)
+	log.Fatal(err)
+}
+
+if err := tx.Commit(ctx); err != nil {
+	log.Fatal(err)
+}
+```
+
+**3. Run a worker to execute tasks.** A `Worker` owns the goroutine pool, heartbeats, and the reaper. `Start` blocks until the context is cancelled, then drains in-flight work.
+
+```go
+worker := dhara.NewWorker(pool,
+	dhara.WithMaxWorkers(10),
+	dhara.WithPollInterval(1*time.Second),
+	dhara.WithHandlerTimeout(5*time.Minute),
+)
+
+worker.RegisterHandler("send_email", func(ctx context.Context, payload json.RawMessage) error {
+	var p EmailPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return err
+	}
+	log.Printf("sending email to %s: %s", p.To, p.Subject)
+	// do the work...
+	return nil
+})
+
+ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+defer stop()
+
+if err := worker.Start(ctx); err != nil {
+	log.Fatal(err)
+}
+```
+
+**Enqueue options.** `Enqueue` and `EnqueueTx` accept variadic options:
+
+```go
+client.Enqueue(ctx, "send_email", payload,
+	dhara.WithIdempotencyKey("order-1234"), // replay-safe: same key + payload returns the existing task
+	dhara.WithPriority(10),
+	dhara.WithMaxRetries(3),
+	dhara.WithRunAt(time.Now().Add(1*time.Hour)), // delay execution
+)
+```
+
+Every enqueue returns an `*EnqueueResult`:
+
+```go
+type EnqueueResult struct {
+	Task      *Task // the created task, or the existing task on an idempotent replay
+	Duplicate bool  // true if an existing (type, idempotency_key) task was returned instead
+}
+```
+
+### Option B: Run the pre-built binaries
+
+Dhara ships as two independent binaries: the **Server** (HTTP API) and the **Worker** (task processor). They share the same database and can be scaled independently.
+
+```bash
+docker compose up db -d
+
+export DHARA_DATABASE_URL="postgres://dhara:dhara@localhost:5432/dhara?sslmode=disable"
+
+# Start the API Server
+go run ./cmd/server &
+
+# Start the Worker Process
+go run ./cmd/worker &
+```
+
+Both binaries auto-migrate on startup (`AUTO_MIGRATE=true` by default) using the migrations embedded in the library, nothing else to set up.
+
+**Interact with the queue:**
+
+```bash
+curl -X POST http://localhost:8080/api/v1/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"type":"echo","payload":{"message":"Hello, Dhara!"}}'
+
+curl "http://localhost:8080/api/v1/tasks?limit=20"
+```
+
+The worker binary registers a few demo handlers: `echo`, `send_email`, `always_fail`, `slow_task`, so you can see retries, dead-lettering, and timeouts in action. To register your own task types, see [Adding custom task types](#adding-custom-task-types).
+
+## Migrations
+
+Migrations are **embedded in the library** (`go:embed`), so users never need a `MIGRATIONS_DIR` or a separate migration step. Each migration ships as an `up`/`down` pair, and rollback runs the matching `.down.sql`.
+
+There are three ways to migrate, in increasing order of control:
+
+**1. In your application (recommended for getting started).** Call `dhara.Migrate` once before enqueuing:
+
+```go
+res, err := dhara.Migrate(ctx, pool)
+// res.Versions: the migration versions that were applied
+// res.Skipped: how many were already applied and skipped
+```
+
+Roll back programmatically with `dhara.MigrateDown(ctx, pool, steps)`: each step runs the corresponding `.down.sql`:
+
+```go
+if _, err := dhara.MigrateDown(ctx, pool, 1); err != nil { // roll back 1 migration
+	log.Fatal(err)
+}
+```
+
+**2. From the CLI (river-style, recommended for production).** `cmd/migrate` is a tiny CLI over the same embedded migrations:
+
+```bash
+go run ./cmd/migrate           # apply all pending migrations (default: up)
+go run ./cmd/migrate down      # roll back 1 migration (runs the .down.sql)
+go run ./cmd/migrate down 3    # roll back 3 migrations
+```
+
+It reads `DHARA_DATABASE_URL` from the environment, just like the server and worker.
+
+**3. With your own migration files.** If you maintain a fork of the schema, pass any `fs.FS` rooted at your migration directory (flat `NNNNNN_name.up.sql` / `.down.sql` files):
+
+```go
+res, err := dhara.MigrateWith(ctx, pool, os.DirFS("./migrations"))
+res, err = dhara.MigrateDownWith(ctx, pool, os.DirFS("./migrations"), 2)
+```
+
+> **Note:** The library never auto-migrates by itself, DDL at app startup is a footgun in production. You choose when to run it: once in your app, via the CLI, or via `AUTO_MIGRATE` on the pre-built binaries.
 
 ## Configuration
 
-Dhara is configured entirely via environment variables.
+The pre-built binaries are configured via environment variables. Library users configure the same knobs with the `dhara.With*` option functions instead.
 
-| Variable             | Default Value            | Description                                            |
-| :------------------- | :----------------------- | :----------------------------------------------------- |
-| `DHARA_DATABASE_URL` | _Required_               | PostgreSQL connection string                           |
-| `AUTO_MIGRATE`       | `true`                   | Automatically run migrations on server startup         |
-| `MIGRATIONS_DIR`     | `internal/db/migrations` | Path to the SQL migrations directory                   |
-| `PORT`               | `8080`                   | Port for the HTTP API server                           |
-| `WORKER_COUNT`       | `5`                      | Size of the local concurrent worker pool               |
-| `HANDLER_TIMEOUT`    | `5m`                     | Maximum execution time limit for any single task       |
-| `SHUTDOWN_TIMEOUT`   | `30s`                    | Maximum time allowed to drain active tasks on shutdown |
-| `LOG_LEVEL`          | `info`                   | Logging verbosity (`debug`, `info`, `warn`, `error`)   |
-| `LOG_FORMAT`         | `text`                   | Structured log output style (`text` or `json`)         |
+| Variable             | Default        | Description                                                              |
+| :------------------- | :------------- | :----------------------------------------------------------------------- |
+| `DHARA_DATABASE_URL` | _Required_     | PostgreSQL connection string                                             |
+| `AUTO_MIGRATE`       | `true`         | Automatically run embedded migrations on binary startup                  |
+| `PORT`               | `8080`         | Port for the HTTP API server                                             |
+| `WORKER_PREFIX`      | `dhara-worker` | Worker identity prefix                                                   |
+| `WORKER_COUNT`       | `5`            | Size of the local concurrent worker pool                                 |
+| `POLL_INTERVAL`      | `1s`           | How often workers poll for pending tasks                                 |
+| `HEARTBEAT_INTERVAL` | `30s`          | How often running tasks update their heartbeat                           |
+| `HANDLER_TIMEOUT`    | `5m`           | Maximum execution time limit for any single task                         |
+| `STUCK_THRESHOLD`    | `5m`           | How long a task can run without a heartbeat before it's considered stuck |
+| `REAPER_INTERVAL`    | `30s`          | How often the reaper scans for stuck tasks                               |
+| `BASE_BACKOFF`       | `1s`           | Initial retry backoff (exponential with full jitter)                     |
+| `MAX_BACKOFF`        | `5m`           | Maximum retry backoff                                                    |
+| `SHUTDOWN_TIMEOUT`   | `30s`          | Maximum time allowed to drain active tasks on shutdown                   |
+| `LOG_LEVEL`          | `info`         | Logging verbosity (`debug`, `info`, `warn`, `error`)                     |
+| `LOG_FORMAT`         | `text`         | Structured log output style (`text` or `json`)                           |
+
+Durations accept either Go duration strings (`30s`, `5m`) or plain integers interpreted as seconds.
 
 ## API & Observability Reference
 
 ### Task Management API
 
-- `POST /api/v1/tasks` — Enqueue a new task.
-- `GET /api/v1/tasks` — Query and list tasks with metadata.
-- `GET /api/v1/tasks/{id}` — Fetch detailed status of a specific task.
-- `DELETE /api/v1/tasks/{id}` — Cancel a `PENDING` or `RUNNING` task.
-- `POST /api/v1/tasks/{id}/retry` — Manually trigger a retry for a `DEAD` task.
+- `POST /api/v1/tasks`: Enqueue a new task.
+- `GET /api/v1/tasks`: Query and list tasks with metadata.
+- `GET /api/v1/tasks/{id}`: Fetch detailed status of a specific task.
+- `DELETE /api/v1/tasks/{id}`: Cancel a `PENDING` or `RUNNING` task.
+- `POST /api/v1/tasks/{id}/retry`: Manually trigger a retry for a `DEAD` task.
+
+Every endpoint is a thin wrapper over the same `dhara.Client` methods the library exposes (`Insert`, `ListTasks`, `GetTask`, `CancelTask`, `RetryTask`), so the API and library share one code path by construction.
 
 ### Orchestration Health Probes
 
-- `GET /api/v1/livez` — Liveness probe. Returns `200 OK` when the process is up.
-- `GET /api/v1/readyz` — Readiness probe. Verifies database connectivity and worker pool status before routing traffic.
+- `GET /api/v1/livez`: Liveness probe. Returns `200 OK` when the process is up.
+- `GET /api/v1/readyz`: Readiness probe. Verifies database connectivity and worker pool status before routing traffic.
 
 ### Prometheus Metrics
 
@@ -144,58 +323,43 @@ Dhara is configured entirely via environment variables.
 
 ## Adding custom task types
 
-Dhara uses a registry that maps task type strings to handler function. To add your own:
+Handlers have the signature `func(ctx context.Context, payload json.RawMessage) error`, return `nil` for success, any error to trigger a retry (until max retries exhaust and the task goes `DEAD`).
 
-1. Implement a handler with signature `func(ctx context.Context, payload json.RawMessage) error`.
+**Using the library:** register a handler on your `Worker`:
 
-    Example handler (e.g., `internal/tasks/custom_handlers.go`):
+```go
+worker.RegisterHandler("welcome_email", func(ctx context.Context, payload json.RawMessage) error {
+	var p struct {
+		To      string `json:"to"`
+		Subject string `json:"subject"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return fmt.Errorf("invalid payload: %w", err)
+	}
 
-    ```go
-    import (
-        "context"
-        "encoding/json"
-        "fmt"
+	log.Printf("sending welcome email to %s: %s", p.To, p.Subject)
+	// perform task logic here...
+	return nil
+})
+```
 
-        "github.com/md-talim/dhara/internal/ctxlog"
-    )
+**Using the binaries:** add the same handler to the registration block in `cmd/worker/main.go`:
 
-    func WelcomeEmail(ctx context.Context, payload json.RawMessage) error {
-        var p struct {
-            To      string `json:"to"`
-            Subject string `json:"subject"`
-        }
-        if err := json.Unmarshal(payload, &p); err != nil {
-            return fmt.Errorf("invalid payload: %w", err)
-        }
+```go
+worker.RegisterHandler("echo", tasks.Echo)
+worker.RegisterHandler("send_email", tasks.SendEmail)
+worker.RegisterHandler("welcome_email", myWelcomeEmailHandler) // yours
+```
 
-        ctxlog.From(ctx).Info("sending welcome email", "to", p.To, "subject", p.Subject)
-        // perform task logic here...
-        return nil
-    }
-    ```
+Then submit tasks with that `"type"`:
 
-2)  Register your custom handler in `cmd/worker/main.go` with the registry:
+```bash
+curl -X POST http://localhost:8080/api/v1/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"type":"welcome_email","payload":{"to":"dev@example.com","subject":"Welcome to Dhara!"}}'
+```
 
-    ```go
-    registry := tasks.NewRegistry(map[string]tasks.HandlerFunc{
-         "echo":          tasks.Echo,
-         "send_email":    tasks.SendEmail,
-         "welcome_email": tasks.WelcomeEmail,
-     })
-
-     // Inside run(), replace tasks.NewDemoRegistry() with your custom registry:
-     // registry := tasks.NewRegistry(...)
-    ```
-
-3)  Submit tasks with `"type": "welcome_email"` in the API request.
-
-    ```bash
-    curl -X POST http://localhost:8080/api/v1/tasks \
-     -H "Content-Type: application/json" \
-     -d '{"type":"welcome_email","payload":{"to":"dev@example.com","subject":"Welcome to Dhara!"}}'
-    ```
-
-See [`internal/tasks/demo_handlers.go`](./internal/tasks/demo_handlers.go)`` for more examples.
+See [`internal/tasks/demo_handlers.go`](./internal/tasks/demo_handlers.go) for more examples.
 
 ## Planned work
 
