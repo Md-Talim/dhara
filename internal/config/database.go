@@ -8,7 +8,7 @@ type DatabaseConfig struct {
 
 func NewDatabaseConfig() *DatabaseConfig {
 	return &DatabaseConfig{
-		URL: getEnvString("DARA_DATABASE_URL", ""),
+		URL: getEnvString("DHARA_DATABASE_URL", ""),
 	}
 }
 
