@@ -2,7 +2,6 @@ package dhara
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
@@ -15,8 +14,6 @@ import (
 	"github.com/md-talim/dhara/internal/store"
 	"github.com/md-talim/dhara/internal/tasks"
 )
-
-type HandlerFunc func(ctx context.Context, payload json.RawMessage) error
 
 type WorkerOption func(*workerConfig)
 
@@ -130,7 +127,7 @@ func (w *Worker) RegisterHandler(taskType string, handler HandlerFunc) {
 	if w.started.Load() {
 		panic("dhara: RegisterHandler called after Start")
 	}
-	// w.registry.Add(taskType, handler)
+	w.registry.Add(taskType, handler)
 }
 
 func (w *Worker) Start(ctx context.Context) error {

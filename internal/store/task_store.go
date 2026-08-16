@@ -11,10 +11,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/md-talim/dhara/dharatype"
 	"github.com/md-talim/dhara/internal/metrics"
 )
 
-type Task struct {
+// TaskRow represents a row in the tasks table. It contains all the
+// fields necessary to manage and track the state of a task in the queue.
+type TaskRow struct {
 	ID             uuid.UUID
 	Type           string
 	Payload        json.RawMessage
@@ -34,27 +37,18 @@ type Task struct {
 	UpdatedAt      time.Time
 }
 
-// TaskListFilter holds the optional filters and pagination for listing tasks.
-type TaskListFilter struct {
-	Status   string
-	Type     string
-	Retrying *bool
-	Limit    int
-	Offset   int
-}
-
 type TaskStore interface {
-	Create(ctx context.Context, task *Task) (bool, error)
-	CreateTx(ctx context.Context, tx pgx.Tx, task *Task) (bool, error)
-	GetById(ctx context.Context, id string) (*Task, error)
-	List(ctx context.Context, filter TaskListFilter) (tasks []Task, total int, err error)
-	Cancel(ctx context.Context, id string) (*Task, error)
-	Claim(ctx context.Context, workerID string) (*Task, error)
+	Create(ctx context.Context, task *TaskRow) (bool, error)
+	CreateTx(ctx context.Context, tx pgx.Tx, task *TaskRow) (bool, error)
+	GetById(ctx context.Context, id string) (*TaskRow, error)
+	List(ctx context.Context, filter dharatype.TaskListFilter) (tasks []TaskRow, total int, err error)
+	Cancel(ctx context.Context, id string) (*TaskRow, error)
+	Claim(ctx context.Context, workerID string) (*TaskRow, error)
 	Heartbeat(ctx context.Context, taskID, workerID string) error
 	MarkCompleted(ctx context.Context, taskID, workerID string, durationMS int64) error
-	MarkPending(ctx context.Context, task *Task, workerID, lastError string, runAt time.Time) error
+	MarkPending(ctx context.Context, task *TaskRow, workerID, lastError string, runAt time.Time) error
 	MarkDead(ctx context.Context, taskID, workerID, lastError, reason string) error
-	RetryDead(ctx context.Context, taskID string) (*Task, error)
+	RetryDead(ctx context.Context, taskID string) (*TaskRow, error)
 	RequeueStaleRunning(ctx context.Context, staleThreshold time.Duration, reaperID string) (int64, error)
 }
 
@@ -72,7 +66,7 @@ func NewTaskStore(db *pgxpool.Pool, m *metrics.Metrics) *PostgresTaskStore {
 
 // Create enqueues a task in its own transaction. To insert inside a
 // caller-owned transaction (for atomicity with business logic), use CreateTx.
-func (ts *PostgresTaskStore) Create(ctx context.Context, task *Task) (bool, error) {
+func (ts *PostgresTaskStore) Create(ctx context.Context, task *TaskRow) (bool, error) {
 	tx, err := ts.db.Begin(ctx)
 	if err != nil {
 		return false, fmt.Errorf("begin tx: %w", err)
@@ -94,14 +88,14 @@ func (ts *PostgresTaskStore) Create(ctx context.Context, task *Task) (bool, erro
 // CreateTx inserts a task inside the caller's transaction. It never commits
 // or rolls back — the caller owns the transaction, so the task is committed
 // atomically with any other writes in the same transaction.
-func (ts *PostgresTaskStore) CreateTx(ctx context.Context, tx pgx.Tx, task *Task) (bool, error) {
+func (ts *PostgresTaskStore) CreateTx(ctx context.Context, tx pgx.Tx, task *TaskRow) (bool, error) {
 	return ts.insertTask(ctx, tx, task)
 }
 
 // insertTask is the shared insert core: the INSERT, payload hashing, and the
 // idempotency replay/conflict logic all run on a single executor so the
 // conflict check happens in the same transaction as the insert.
-func (ts *PostgresTaskStore) insertTask(ctx context.Context, exec DBTX, task *Task) (bool, error) {
+func (ts *PostgresTaskStore) insertTask(ctx context.Context, exec DBTX, task *TaskRow) (bool, error) {
 	payloadHash, err := hashPayload(task.Payload) // new task payload hash
 	if err != nil {
 		return false, err
@@ -145,7 +139,7 @@ func (ts *PostgresTaskStore) insertTask(ctx context.Context, exec DBTX, task *Ta
 	return true, nil
 }
 
-func (ts *PostgresTaskStore) GetById(ctx context.Context, id string) (*Task, error) {
+func (ts *PostgresTaskStore) GetById(ctx context.Context, id string) (*TaskRow, error) {
 	query := `
 		SELECT
 			id, type, payload, idempotency_key, status, priority, attempts, max_retries,
@@ -153,7 +147,7 @@ func (ts *PostgresTaskStore) GetById(ctx context.Context, id string) (*Task, err
 	    FROM tasks WHERE id = $1
 	`
 
-	task := &Task{}
+	task := &TaskRow{}
 	err := ts.db.QueryRow(ctx, query, id).Scan(
 		&task.ID, &task.Type, &task.Payload, &task.IdempotencyKey, &task.Status, &task.Priority, &task.Attempts,
 		&task.MaxRetries, &task.RunAt, &task.StartedAt, &task.CompletedAt, &task.LastError, &task.CreatedAt, &task.UpdatedAt,
@@ -168,7 +162,7 @@ func (ts *PostgresTaskStore) GetById(ctx context.Context, id string) (*Task, err
 	return task, nil
 }
 
-func (ts *PostgresTaskStore) List(ctx context.Context, filter TaskListFilter) ([]Task, int, error) {
+func (ts *PostgresTaskStore) List(ctx context.Context, filter dharatype.TaskListFilter) ([]TaskRow, int, error) {
 	// Build dynamic WHERE clauses.
 	var whereClauses []string
 	var args []any
@@ -223,9 +217,9 @@ func (ts *PostgresTaskStore) List(ctx context.Context, filter TaskListFilter) ([
 	}
 	defer rows.Close()
 
-	var tasks []Task
+	var tasks []TaskRow
 	for rows.Next() {
-		var t Task
+		var t TaskRow
 		if err := rows.Scan(
 			&t.ID, &t.Type, &t.IdempotencyKey, &t.Status, &t.Priority, &t.Attempts,
 			&t.MaxRetries, &t.RunAt, &t.StartedAt, &t.CompletedAt, &t.LastError, &t.CreatedAt, &t.UpdatedAt,
@@ -242,7 +236,7 @@ func (ts *PostgresTaskStore) List(ctx context.Context, filter TaskListFilter) ([
 	return tasks, total, nil
 }
 
-func (ts *PostgresTaskStore) Cancel(ctx context.Context, id string) (*Task, error) {
+func (ts *PostgresTaskStore) Cancel(ctx context.Context, id string) (*TaskRow, error) {
 	tx, err := ts.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -257,7 +251,7 @@ func (ts *PostgresTaskStore) Cancel(ctx context.Context, id string) (*Task, erro
                   last_error, created_at, updated_at
     `
 
-	task := &Task{}
+	task := &TaskRow{}
 	err = tx.QueryRow(ctx, updateQuery, id).Scan(
 		&task.ID, &task.Type, &task.Status, &task.Priority, &task.Attempts,
 		&task.MaxRetries, &task.RunAt, &task.IdempotencyKey, &task.StartedAt,
@@ -291,7 +285,7 @@ func (ts *PostgresTaskStore) Cancel(ctx context.Context, id string) (*Task, erro
 	return task, nil
 }
 
-func (ts *PostgresTaskStore) Claim(ctx context.Context, workerID string) (*Task, error) {
+func (ts *PostgresTaskStore) Claim(ctx context.Context, workerID string) (*TaskRow, error) {
 	tx, err := ts.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -317,7 +311,7 @@ func (ts *PostgresTaskStore) Claim(ctx context.Context, workerID string) (*Task,
 		RETURNING id, type, payload, attempts, max_retries, idempotency_key
 	`
 
-	task := &Task{}
+	task := &TaskRow{}
 	err = tx.QueryRow(ctx, claimQuery, workerID).Scan(
 		&task.ID, &task.Type, &task.Payload,
 		&task.Attempts, &task.MaxRetries, &task.IdempotencyKey,
@@ -405,7 +399,7 @@ func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID, workerID
 	return nil
 }
 
-func (ts *PostgresTaskStore) MarkPending(ctx context.Context, task *Task, workerID, lastError string, nextRunAt time.Time) error {
+func (ts *PostgresTaskStore) MarkPending(ctx context.Context, task *TaskRow, workerID, lastError string, nextRunAt time.Time) error {
 	tx, err := ts.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -502,7 +496,7 @@ func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, workerID, las
 	return nil
 }
 
-func (ts *PostgresTaskStore) RetryDead(ctx context.Context, taskID string) (*Task, error) {
+func (ts *PostgresTaskStore) RetryDead(ctx context.Context, taskID string) (*TaskRow, error) {
 	tx, err := ts.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -526,7 +520,7 @@ func (ts *PostgresTaskStore) RetryDead(ctx context.Context, taskID string) (*Tas
 		          run_at, started_at, completed_at, last_error, created_at, updated_at
 	`
 
-	task := &Task{}
+	task := &TaskRow{}
 	err = tx.QueryRow(ctx, updateQuery, taskID).Scan(
 		&task.ID, &task.Type, &task.IdempotencyKey, &task.Status, &task.Priority, &task.Attempts,
 		&task.MaxRetries, &task.RunAt, &task.StartedAt, &task.CompletedAt, &task.LastError, &task.CreatedAt, &task.UpdatedAt,
@@ -707,7 +701,7 @@ func (ts *PostgresTaskStore) GetQueueDBMetrics(ctx context.Context) (*QueueDBMet
 	return metrics, nil
 }
 
-func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, exec DBTX, taskType, idempotencyKey string) (*Task, error) {
+func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, exec DBTX, taskType, idempotencyKey string) (*TaskRow, error) {
 	query := `
 		SELECT
 			id, type, payload, payload_hash, idempotency_key, status, priority, attempts, max_retries,
@@ -715,7 +709,7 @@ func (ts *PostgresTaskStore) getByTypeAndIdempotencyKey(ctx context.Context, exe
 	    FROM tasks WHERE type = $1 AND idempotency_key = $2
 	`
 
-	task := &Task{}
+	task := &TaskRow{}
 	err := exec.QueryRow(ctx, query, taskType, idempotencyKey).Scan(
 		&task.ID, &task.Type, &task.Payload, &task.PayloadHash, &task.IdempotencyKey, &task.Status, &task.Priority, &task.Attempts,
 		&task.MaxRetries, &task.RunAt, &task.StartedAt, &task.CompletedAt, &task.LastError, &task.CreatedAt, &task.UpdatedAt,

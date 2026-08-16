@@ -191,7 +191,7 @@ func TestCreateTask_RunAtPast(t *testing.T) {
 type fakeTaskClient struct {
 	insertFn    func(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error)
 	getTaskFn   func(ctx context.Context, id string) (*dhara.Task, error)
-	listTasksFn func(ctx context.Context, filter dhara.ListFilter) ([]dhara.Task, int, error)
+	listTasksFn func(ctx context.Context, filter dhara.TaskListFilter) ([]dhara.Task, int, error)
 	cancelFn    func(ctx context.Context, id string) (*dhara.Task, error)
 	retryFn     func(ctx context.Context, id string) (*dhara.Task, error)
 }
@@ -210,7 +210,7 @@ func (f *fakeTaskClient) GetTask(ctx context.Context, id string) (*dhara.Task, e
 	return nil, dhara.ErrTaskNotFound
 }
 
-func (f *fakeTaskClient) ListTasks(ctx context.Context, filter dhara.ListFilter) ([]dhara.Task, int, error) {
+func (f *fakeTaskClient) ListTasks(ctx context.Context, filter dhara.TaskListFilter) ([]dhara.Task, int, error) {
 	if f.listTasksFn != nil {
 		return f.listTasksFn(ctx, filter)
 	}

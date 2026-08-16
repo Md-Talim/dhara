@@ -45,7 +45,7 @@ func TestCreateTask_NewTask(t *testing.T) {
 		truncateTables(ctx, testDB)
 	})
 
-	task := &store.Task{
+	task := &store.TaskRow{
 		Type:       "send_email",
 		Payload:    json.RawMessage(`{}`),
 		Priority:   0,
@@ -86,7 +86,7 @@ func TestCreateTask_DelayedTask(t *testing.T) {
 	})
 	future := time.Now().Add(1 * time.Hour).UTC().Truncate(time.Microsecond)
 
-	task := &store.Task{
+	task := &store.TaskRow{
 		Type:       "send_email",
 		Payload:    json.RawMessage(`{}`),
 		Priority:   0,
@@ -110,7 +110,7 @@ func TestCreateTask_IdempotencyKey_ReturnExisting(t *testing.T) {
 	})
 
 	key := "order_123"
-	task1 := &store.Task{
+	task1 := &store.TaskRow{
 		Type:           "send_email",
 		IdempotencyKey: &key,
 		Payload:        json.RawMessage(`{}`),
@@ -119,7 +119,7 @@ func TestCreateTask_IdempotencyKey_ReturnExisting(t *testing.T) {
 		RunAt:          time.Now().Add(5 * time.Minute),
 	}
 
-	task2 := &store.Task{
+	task2 := &store.TaskRow{
 		Type:           "send_email",
 		IdempotencyKey: &key,
 		Payload:        json.RawMessage(`{}`),
@@ -151,7 +151,7 @@ func TestCreateTask_IdempotencyKey_SameKeyDifferentType(t *testing.T) {
 	})
 
 	key := "order_123"
-	task1 := &store.Task{
+	task1 := &store.TaskRow{
 		Type:           "send_email",
 		IdempotencyKey: &key,
 		Payload:        json.RawMessage(`{}`),
@@ -160,7 +160,7 @@ func TestCreateTask_IdempotencyKey_SameKeyDifferentType(t *testing.T) {
 		RunAt:          time.Now().Add(5 * time.Minute),
 	}
 
-	task2 := &store.Task{
+	task2 := &store.TaskRow{
 		Type:           "process_payment",
 		IdempotencyKey: &key,
 		Payload:        json.RawMessage(`{}`),
@@ -188,7 +188,7 @@ func TestCreateTask_NilIdempotencyKey_NoDuplicateConstraint(t *testing.T) {
 		truncateTables(ctx, testDB)
 	})
 
-	task1 := &store.Task{
+	task1 := &store.TaskRow{
 		Type:           "send_email",
 		IdempotencyKey: nil,
 		Payload:        json.RawMessage(`{}`),
@@ -196,7 +196,7 @@ func TestCreateTask_NilIdempotencyKey_NoDuplicateConstraint(t *testing.T) {
 		MaxRetries:     0,
 		RunAt:          time.Now().Add(5 * time.Minute),
 	}
-	task2 := &store.Task{
+	task2 := &store.TaskRow{
 		Type:           "send_email",
 		IdempotencyKey: nil,
 		Payload:        json.RawMessage(`{}`),
@@ -224,7 +224,7 @@ func TestCreateTask_IdempotencyKey_DifferentPayload_ReturnsConflictError(t *test
 	})
 
 	key := "order_123"
-	task1 := &store.Task{
+	task1 := &store.TaskRow{
 		Type:           "send_email",
 		IdempotencyKey: &key,
 		Payload:        json.RawMessage(`{}`),
@@ -233,7 +233,7 @@ func TestCreateTask_IdempotencyKey_DifferentPayload_ReturnsConflictError(t *test
 		RunAt:          time.Now().Add(5 * time.Minute),
 	}
 
-	task2 := &store.Task{
+	task2 := &store.TaskRow{
 		Type:           "send_email",
 		IdempotencyKey: &key,
 		Payload:        json.RawMessage(`{ "to": "dummyemail@example.com", "subject": "test email" }`),
@@ -258,7 +258,7 @@ func TestGetTaskById(t *testing.T) {
 		truncateTables(ctx, testDB)
 	})
 
-	task := &store.Task{
+	task := &store.TaskRow{
 		Type:       "send_email",
 		Payload:    json.RawMessage(`{}`),
 		Priority:   0,

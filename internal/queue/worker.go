@@ -100,7 +100,7 @@ func (w *Worker) processNext(ctx context.Context) error {
 	return nil
 }
 
-func (w *Worker) startHeartbeat(heartbeatCtx context.Context, task *store.Task) func() {
+func (w *Worker) startHeartbeat(heartbeatCtx context.Context, task *store.TaskRow) func() {
 	heartbeatCtx, cancel := context.WithCancel(heartbeatCtx)
 	taskLogger := w.taskLogger(task)
 
@@ -129,7 +129,7 @@ func (w *Worker) startHeartbeat(heartbeatCtx context.Context, task *store.Task) 
 	return cancel
 }
 
-func (w *Worker) handleFailure(ctx context.Context, task *store.Task, err error) error {
+func (w *Worker) handleFailure(ctx context.Context, task *store.TaskRow, err error) error {
 	taskLogger := w.taskLogger(task)
 	taskLogger.Warn("task failed", "err", err)
 
@@ -159,7 +159,7 @@ func (w *Worker) handleFailure(ctx context.Context, task *store.Task, err error)
 	return nil
 }
 
-func (w *Worker) taskLogger(task *store.Task) *slog.Logger {
+func (w *Worker) taskLogger(task *store.TaskRow) *slog.Logger {
 	return w.logger.With(
 		"worker_id", w.workerID,
 		"task_id", task.ID.String(),

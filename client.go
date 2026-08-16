@@ -33,7 +33,7 @@ func (c *Client) Insert(ctx context.Context, params InsertParams) (*EnqueueResul
 		return nil, &ValidationError{Err: err}
 	}
 
-	task := params.ToTask()
+	task := params.toStoreTask()
 	created, err := c.store.Create(ctx, task)
 	if err != nil {
 		return nil, mapStoreError(err)
@@ -49,7 +49,7 @@ func (c *Client) InsertTx(ctx context.Context, tx pgx.Tx, params InsertParams) (
 		return nil, &ValidationError{Err: err}
 	}
 
-	task := params.ToTask()
+	task := params.toStoreTask()
 	created, err := c.store.CreateTx(ctx, tx, task)
 	if err != nil {
 		return nil, mapStoreError(err)
@@ -100,7 +100,7 @@ func (c *Client) GetTask(ctx context.Context, id string) (*Task, error) {
 }
 
 // ListTasks return tasks matching the fitler, plus the total count.
-func (c *Client) ListTasks(ctx context.Context, filter ListFilter) ([]Task, int, error) {
+func (c *Client) ListTasks(ctx context.Context, filter TaskListFilter) ([]Task, int, error) {
 	tasks, total, err := c.store.List(ctx, filter)
 	if err != nil {
 		return nil, 0, mapStoreError(err)
@@ -128,16 +128,6 @@ func (c *Client) RetryTask(ctx context.Context, id string) (*Task, error) {
 		return nil, mapStoreError(err)
 	}
 	return newTask(task), nil
-}
-
-type QueueMetrics struct {
-	TasksPending        int64
-	TasksRunning        int64
-	TasksCompleted      int64
-	TasksCanceled       int64
-	TasksDead           int64
-	TasksPendingReady   int64
-	TasksPendingDelayed int64
 }
 
 func (c *Client) QueueMetrics(ctx context.Context) (*QueueMetrics, error) {

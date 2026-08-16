@@ -1,11 +1,8 @@
 package tasks
 
-import (
-	"context"
-	"encoding/json"
-)
+import "github.com/md-talim/dhara/dharatype"
 
-type HandlerFunc func(ctx context.Context, payload json.RawMessage) error
+type HandlerFunc = dharatype.HandlerFunc
 
 type HandlerRegistry interface {
 	Get(taskType string) (HandlerFunc, bool)

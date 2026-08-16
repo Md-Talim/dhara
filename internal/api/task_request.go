@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/md-talim/dhara/internal/store"
+	"github.com/md-talim/dhara"
 )
 
 type createTaskRequest struct {
@@ -16,8 +16,8 @@ type createTaskRequest struct {
 	RunAt          *time.Time      `json:"run_at"`
 }
 
-func (r *createTaskRequest) toInsertParams() *store.InsertParams {
-	return &store.InsertParams{
+func (r *createTaskRequest) toInsertParams() *dhara.InsertParams {
+	return &dhara.InsertParams{
 		Type:           r.Type,
 		Payload:        r.Payload,
 		IdempotencyKey: r.IdempotencyKey,

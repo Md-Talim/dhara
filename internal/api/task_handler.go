@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/md-talim/dhara"
-	"github.com/md-talim/dhara/internal/store"
+	"github.com/md-talim/dhara/dharatype"
 )
 
 // TaskClient is the subset of *dhara.Client the API needs. It exists so the
@@ -20,7 +20,7 @@ import (
 type TaskClient interface {
 	Insert(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error)
 	GetTask(ctx context.Context, id string) (*dhara.Task, error)
-	ListTasks(ctx context.Context, filter dhara.ListFilter) ([]dhara.Task, int, error)
+	ListTasks(ctx context.Context, filter dharatype.TaskListFilter) ([]dhara.Task, int, error)
 	CancelTask(ctx context.Context, id string) (*dhara.Task, error)
 	RetryTask(ctx context.Context, id string) (*dhara.Task, error)
 }
@@ -43,7 +43,7 @@ func (h *TaskHandler) HandleListTasks(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	q := r.URL.Query()
-	filter := store.TaskListFilter{
+	filter := dharatype.TaskListFilter{
 		Status: q.Get("status"),
 		Type:   q.Get("type"),
 	}

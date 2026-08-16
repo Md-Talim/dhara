@@ -13,7 +13,7 @@ func TestCreateTx_CommitPersistsTask(t *testing.T) {
 	ctx := context.Background()
 	t.Cleanup(func() { truncateTables(ctx, testDB) })
 
-	task := &store.Task{
+	task := &store.TaskRow{
 		Type:       "send_email",
 		Payload:    json.RawMessage(`{}`),
 		Priority:   0,
@@ -52,7 +52,7 @@ func TestCreateTx_RollbackDiscardsTask(t *testing.T) {
 	ctx := context.Background()
 	t.Cleanup(func() { truncateTables(ctx, testDB) })
 
-	task := &store.Task{
+	task := &store.TaskRow{
 		Type:       "send_email",
 		Payload:    json.RawMessage(`{}`),
 		Priority:   0,
@@ -93,7 +93,7 @@ func TestCreateTx_IdempotencyKey_DuplicateReturnsExisting(t *testing.T) {
 	key := "order_123"
 
 	// First insert via Create (its own transaction).
-	task1 := &store.Task{
+	task1 := &store.TaskRow{
 		Type:           "send_email",
 		IdempotencyKey: &key,
 		Payload:        json.RawMessage(`{}`),
@@ -106,7 +106,7 @@ func TestCreateTx_IdempotencyKey_DuplicateReturnsExisting(t *testing.T) {
 	}
 
 	// Duplicate via CreateTx: must replay the existing task, not insert.
-	task2 := &store.Task{
+	task2 := &store.TaskRow{
 		Type:           "send_email",
 		IdempotencyKey: &key,
 		Payload:        json.RawMessage(`{}`),

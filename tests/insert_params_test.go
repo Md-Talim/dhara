@@ -1,16 +1,16 @@
-package store_test
+package tests
 
 import (
 	"encoding/json"
 	"testing"
 	"time"
 
-	"github.com/md-talim/dhara/internal/store"
+	"github.com/md-talim/dhara"
 )
 
 func TestInsertParams_NormalizeAppliesDefaults(t *testing.T) {
 	now := time.Now()
-	params := &store.InsertParams{Type: "send_email"}
+	params := &dhara.InsertParams{Type: "send_email"}
 
 	params.Normalize(now)
 
@@ -31,7 +31,7 @@ func TestInsertParams_NormalizeAppliesDefaults(t *testing.T) {
 func TestInsertParams_NormalizeKeepsProvidedValues(t *testing.T) {
 	now := time.Now()
 	future := now.Add(time.Hour)
-	params := &store.InsertParams{
+	params := &dhara.InsertParams{
 		Type:       "send_email",
 		Payload:    json.RawMessage(`{"to":"x"}`),
 		Priority:   new(7),
@@ -58,42 +58,42 @@ func TestInsertParams_Validate(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		params  *store.InsertParams
+		params  *dhara.InsertParams
 		wantErr bool
 	}{
 		{
 			name:    "valid minimal",
-			params:  &store.InsertParams{Type: "send_email", Payload: json.RawMessage(`{}`), Priority: new(0), MaxRetries: new(5), RunAt: new(now)},
+			params:  &dhara.InsertParams{Type: "send_email", Payload: json.RawMessage(`{}`), Priority: new(0), MaxRetries: new(5), RunAt: new(now)},
 			wantErr: false,
 		},
 		{
 			name:    "missing type",
-			params:  &store.InsertParams{Type: "", Payload: json.RawMessage(`{}`), Priority: new(0), MaxRetries: new(5), RunAt: new(now)},
+			params:  &dhara.InsertParams{Type: "", Payload: json.RawMessage(`{}`), Priority: new(0), MaxRetries: new(5), RunAt: new(now)},
 			wantErr: true,
 		},
 		{
 			name:    "priority out of range",
-			params:  &store.InsertParams{Type: "send_email", Payload: json.RawMessage(`{}`), Priority: new(101), MaxRetries: new(5), RunAt: new(now)},
+			params:  &dhara.InsertParams{Type: "send_email", Payload: json.RawMessage(`{}`), Priority: new(101), MaxRetries: new(5), RunAt: new(now)},
 			wantErr: true,
 		},
 		{
 			name:    "max retries too high",
-			params:  &store.InsertParams{Type: "send_email", Payload: json.RawMessage(`{}`), Priority: new(0), MaxRetries: new(21), RunAt: new(now)},
+			params:  &dhara.InsertParams{Type: "send_email", Payload: json.RawMessage(`{}`), Priority: new(0), MaxRetries: new(21), RunAt: new(now)},
 			wantErr: true,
 		},
 		{
 			name:    "payload too large",
-			params:  &store.InsertParams{Type: "send_email", Payload: bigPayload, Priority: new(0), MaxRetries: new(5), RunAt: new(now)},
+			params:  &dhara.InsertParams{Type: "send_email", Payload: bigPayload, Priority: new(0), MaxRetries: new(5), RunAt: new(now)},
 			wantErr: true,
 		},
 		{
 			name:    "run_at too far in the past",
-			params:  &store.InsertParams{Type: "send_email", Payload: json.RawMessage(`{}`), Priority: new(0), MaxRetries: new(5), RunAt: new(now.Add(-10 * time.Minute))},
+			params:  &dhara.InsertParams{Type: "send_email", Payload: json.RawMessage(`{}`), Priority: new(0), MaxRetries: new(5), RunAt: new(now.Add(-10 * time.Minute))},
 			wantErr: true,
 		},
 		{
 			name:    "run_at too far in the future",
-			params:  &store.InsertParams{Type: "send_email", Payload: json.RawMessage(`{}`), Priority: new(0), MaxRetries: new(5), RunAt: new(now.Add(31 * 24 * time.Hour))},
+			params:  &dhara.InsertParams{Type: "send_email", Payload: json.RawMessage(`{}`), Priority: new(0), MaxRetries: new(5), RunAt: new(now.Add(31 * 24 * time.Hour))},
 			wantErr: true,
 		},
 	}
