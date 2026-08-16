@@ -59,31 +59,17 @@ func (c *Client) InsertTx(ctx context.Context, tx pgx.Tx, params InsertParams) (
 }
 
 func (c *Client) Enqueue(ctx context.Context, taskType string, payload any, opts ...EnqueueOption) (*EnqueueResult, error) {
-	params := InsertParams{Type: taskType}
-	if payload != nil {
-		raw, err := json.Marshal(payload)
-		if err != nil {
-			return nil, fmt.Errorf("dhara: marshal payload: %w", err)
-		}
-		params.Payload = raw
-	}
-	for _, o := range opts {
-		o(&params)
+	params, err := buildInsertParams(taskType, payload, opts...)
+	if err != nil {
+		return nil, err
 	}
 	return c.Insert(ctx, params)
 }
 
 func (c *Client) EnqueueTx(ctx context.Context, tx pgx.Tx, taskType string, payload any, opts ...EnqueueOption) (*EnqueueResult, error) {
-	params := InsertParams{Type: taskType}
-	if payload != nil {
-		raw, err := json.Marshal(payload)
-		if err != nil {
-			return nil, fmt.Errorf("dhara: marshal payload: %w", err)
-		}
-		params.Payload = raw
-	}
-	for _, o := range opts {
-		o(&params)
+	params, err := buildInsertParams(taskType, payload, opts...)
+	if err != nil {
+		return nil, err
 	}
 	return c.InsertTx(ctx, tx, params)
 }
@@ -171,4 +157,21 @@ func (c *Client) Metrics() MetricsSnapshot {
 		WorkersTotal:             c.metrics.WorkersTotal.Load(),
 		WorkersInflight:          c.metrics.WorkersInflight.Load(),
 	}
+}
+
+// buildInsertParams marshals the payload (if any) and applies the enqueue
+// options, producing the InsertParams consumed by Insert and InsertTx.
+func buildInsertParams(taskType string, payload any, opts ...EnqueueOption) (InsertParams, error) {
+	params := InsertParams{Type: taskType}
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return InsertParams{}, fmt.Errorf("dhara: marshal payload: %w", err)
+		}
+		params.Payload = raw
+	}
+	for _, o := range opts {
+		o(&params)
+	}
+	return params, nil
 }

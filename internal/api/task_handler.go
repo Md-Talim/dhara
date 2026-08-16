@@ -137,24 +137,22 @@ func (h *TaskHandler) HandleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now()
 	params := req.toInsertParams()
-	params.Normalize(now)
-	if err := params.Validate(now); err != nil {
-		status = http.StatusBadRequest
-		logger.Warn("create task validation failed", "err", err)
-		writeError(w, status, err.Error())
-		return
-	}
-
 	result, err := h.client.Insert(r.Context(), *params)
 	if err != nil {
+		if verr, ok := errors.AsType[*dhara.ValidationError](err); ok {
+			status = http.StatusBadRequest
+			logger.Warn("create task validation failed", "err", verr)
+			writeError(w, status, verr.Error())
+			return
+		}
 		if errors.Is(err, dhara.ErrTaskConflict) {
 			status = http.StatusConflict
 			logger.Warn("idempotency key conflict", "task_type", params.Type, "idempotency_key", params.IdempotencyKey)
 			writeError(w, status, "idempotency key reused with different payload")
 			return
 		}
+
 		status = http.StatusInternalServerError
 		logger.Error("failed to create task", "err", err, "task_type", params.Type, "idempotency_key", params.IdempotencyKey)
 		writeError(w, status, "failed to create task")

@@ -200,7 +200,22 @@ func (f *fakeTaskClient) Insert(ctx context.Context, params dhara.InsertParams) 
 	if f.insertFn != nil {
 		return f.insertFn(ctx, params)
 	}
-	return nil, errors.New("insert not implemented")
+	// Mirror the real client's Insert: normalize + validate, then succeed.
+	now := time.Now()
+	params.Normalize(now)
+	if err := params.Validate(now); err != nil {
+		return nil, &dhara.ValidationError{Err: err}
+	}
+	return &dhara.EnqueueResult{
+		Task: &dhara.Task{
+			ID:        uuid.New(),
+			Type:      params.Type,
+			Status:    dhara.TaskStatusPending,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Duplicate: false,
+	}, nil
 }
 
 func (f *fakeTaskClient) GetTask(ctx context.Context, id string) (*dhara.Task, error) {
