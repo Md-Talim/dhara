@@ -311,7 +311,7 @@ Every endpoint is a thin wrapper over the same `dhara.Client` methods the librar
 ### Orchestration Health Probes
 
 - `GET /api/v1/livez`: Liveness probe. Returns `200 OK` when the process is up.
-- `GET /api/v1/readyz`: Readiness probe. Verifies database connectivity and worker pool status before routing traffic.
+- `GET /api/v1/readyz`: Readiness probe. Verifies database connectivity before routing traffic.
 
 ### Prometheus Metrics
 

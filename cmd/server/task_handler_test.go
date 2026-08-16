@@ -1,4 +1,4 @@
-package api
+package main
 
 import (
 	"context"
@@ -17,12 +17,12 @@ import (
 )
 
 func TestCreateTask_InvalidJSON(t *testing.T) {
-	h := NewTaskHandler(&fakeTaskClient{}, slog.Default())
+	h := newTaskHandler(&fakeTaskClient{}, slog.Default())
 
 	req := newRequest(`{invalid}`)
 	rr := httptest.NewRecorder()
 
-	h.HandleCreateTask(rr, req)
+	h.handleCreateTask(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rr.Code)
@@ -30,12 +30,12 @@ func TestCreateTask_InvalidJSON(t *testing.T) {
 }
 
 func TestCreateTask_ValidationError(t *testing.T) {
-	h := NewTaskHandler(&fakeTaskClient{}, slog.Default())
+	h := newTaskHandler(&fakeTaskClient{}, slog.Default())
 
 	req := newRequest(`{"type": ""}`)
 	rr := httptest.NewRecorder()
 
-	h.HandleCreateTask(rr, req)
+	h.handleCreateTask(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rr.Code)
@@ -61,12 +61,12 @@ func TestCreateTask_Created(t *testing.T) {
 			}, nil
 		},
 	}
-	h := NewTaskHandler(client, slog.Default())
+	h := newTaskHandler(client, slog.Default())
 
 	req := newRequest(`{"type": "send_email"}`)
 	rr := httptest.NewRecorder()
 
-	h.HandleCreateTask(rr, req)
+	h.handleCreateTask(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", rr.Code)
@@ -94,12 +94,12 @@ func TestCreateTask_IdempotentReplay(t *testing.T) {
 		},
 	}
 
-	h := NewTaskHandler(client, slog.Default())
+	h := newTaskHandler(client, slog.Default())
 
 	req := newRequest(`{"type": "send_email"}`)
 	rr := httptest.NewRecorder()
 
-	h.HandleCreateTask(rr, req)
+	h.handleCreateTask(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
@@ -113,12 +113,12 @@ func TestCreateTask_Conflict(t *testing.T) {
 		},
 	}
 
-	h := NewTaskHandler(client, slog.Default())
+	h := newTaskHandler(client, slog.Default())
 
 	req := newRequest(`{"type": "send_email"}`)
 	rr := httptest.NewRecorder()
 
-	h.HandleCreateTask(rr, req)
+	h.handleCreateTask(rr, req)
 
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d", rr.Code)
@@ -132,12 +132,12 @@ func TestCreateTask_InternalError(t *testing.T) {
 		},
 	}
 
-	h := NewTaskHandler(client, slog.Default())
+	h := newTaskHandler(client, slog.Default())
 
 	req := newRequest(`{"type": "send_email"}`)
 	rr := httptest.NewRecorder()
 
-	h.HandleCreateTask(rr, req)
+	h.handleCreateTask(rr, req)
 
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", rr.Code)
@@ -160,12 +160,12 @@ func TestCreateTask_DefaultsApplied(t *testing.T) {
 		},
 	}
 
-	h := NewTaskHandler(client, slog.Default())
+	h := newTaskHandler(client, slog.Default())
 
 	req := newRequest(`{"type": "send_email"}`)
 	rr := httptest.NewRecorder()
 
-	h.HandleCreateTask(rr, req)
+	h.handleCreateTask(rr, req)
 }
 
 func TestCreateTask_RunAtPast(t *testing.T) {
@@ -176,12 +176,12 @@ func TestCreateTask_RunAtPast(t *testing.T) {
 		"run_at": "%s"
 	}`, past)
 
-	h := NewTaskHandler(&fakeTaskClient{}, slog.Default())
+	h := newTaskHandler(&fakeTaskClient{}, slog.Default())
 
 	req := newRequest(body)
 	rr := httptest.NewRecorder()
 
-	h.HandleCreateTask(rr, req)
+	h.handleCreateTask(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rr.Code)
@@ -197,14 +197,15 @@ type fakeTaskClient struct {
 }
 
 func (f *fakeTaskClient) Insert(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error) {
-	if f.insertFn != nil {
-		return f.insertFn(ctx, params)
-	}
-	// Mirror the real client's Insert: normalize + validate, then succeed.
+	// Mirror the real client's Insert: normalize + validate first, then
+	// delegate to the configured stub (if any) with normalized params.
 	now := time.Now()
 	params.Normalize(now)
 	if err := params.Validate(now); err != nil {
 		return nil, &dhara.ValidationError{Err: err}
+	}
+	if f.insertFn != nil {
+		return f.insertFn(ctx, params)
 	}
 	return &dhara.EnqueueResult{
 		Task: &dhara.Task{
@@ -250,8 +251,8 @@ func newRequest(body string) *http.Request {
 	return httptest.NewRequest(http.MethodPost, "/tasks", strings.NewReader(body))
 }
 
-func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) taskResponse {
-	var resp taskResponse
+func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) dhara.Task {
+	var resp dhara.Task
 	err := json.NewDecoder(rr.Body).Decode(&resp)
 	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)

@@ -9,7 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/md-talim/dhara/internal/app"
 	"github.com/md-talim/dhara/internal/config"
 	"github.com/md-talim/dhara/internal/logging"
 )
@@ -32,11 +31,11 @@ func run() int {
 	}
 
 	logger := logging.New(logCfg.Format, logCfg.Level)
-	application, err := app.NewApplication(app.AppDependencies{
-		StartTime:   start,
-		Logger:      logger,
-		AutoMigrate: migCfg.AutoMigrate,
-		DatabaseURL: dbCfg.URL,
+	application, err := newApplication(appDeps{
+		startTime:   start,
+		logger:      logger,
+		autoMigrate: migCfg.AutoMigrate,
+		databaseURL: dbCfg.URL,
 	})
 	if err != nil {
 		logger.Error("failed to build application", "err", err)
@@ -48,7 +47,7 @@ func run() int {
 
 	server := &http.Server{
 		Addr:              ":" + strconv.Itoa(serverCfg.Port),
-		Handler:           application.Routes(),
+		Handler:           application.routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -72,7 +71,7 @@ func run() int {
 		return 1
 	}
 
-	if err := application.Shutdown(shutdownCtx); err != nil {
+	if err := application.shutdown(); err != nil {
 		logger.Error("application shutdown failed", "err", err)
 		return 1
 	}

@@ -1,4 +1,4 @@
-package api
+package main
 
 import (
 	"context"
@@ -14,10 +14,10 @@ import (
 	"github.com/md-talim/dhara/dharatype"
 )
 
-// TaskClient is the subset of *dhara.Client the API needs. It exists so the
-// handlers stay unit-testable; production wires in the real client, so every
-// task-state code path in the server goes through the library.
-type TaskClient interface {
+// taskClient is the subset of *dhara.Client the server needs. It exists so
+// the handlers stay unit-testable; production wires in the real client, so
+// every task-state code path in the server goes through the library.
+type taskClient interface {
 	Insert(ctx context.Context, params dhara.InsertParams) (*dhara.EnqueueResult, error)
 	GetTask(ctx context.Context, id string) (*dhara.Task, error)
 	ListTasks(ctx context.Context, filter dharatype.TaskListFilter) ([]dhara.Task, int, error)
@@ -25,16 +25,16 @@ type TaskClient interface {
 	RetryTask(ctx context.Context, id string) (*dhara.Task, error)
 }
 
-type TaskHandler struct {
-	client TaskClient
+type taskHandler struct {
+	client taskClient
 	logger *slog.Logger
 }
 
-func NewTaskHandler(client TaskClient, logger *slog.Logger) *TaskHandler {
-	return &TaskHandler{client: client, logger: logger}
+func newTaskHandler(client taskClient, logger *slog.Logger) *taskHandler {
+	return &taskHandler{client: client, logger: logger}
 }
 
-func (h *TaskHandler) HandleListTasks(w http.ResponseWriter, r *http.Request) {
+func (h *taskHandler) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	logger := h.reqLogger(r)
 	start := time.Now()
 	status := http.StatusOK
@@ -99,13 +99,8 @@ func (h *TaskHandler) HandleListTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]taskResponse, len(tasks))
-	for i := range tasks {
-		items[i] = newTaskResponse(&tasks[i])
-	}
-
 	logger.Debug("tasks listed",
-		"returned_count", len(items),
+		"returned_count", len(tasks),
 		"total", total,
 		"status_filter", filter.Status,
 		"type_filter", filter.Type,
@@ -114,14 +109,14 @@ func (h *TaskHandler) HandleListTasks(w http.ResponseWriter, r *http.Request) {
 	)
 
 	writeJSON(w, http.StatusOK, envelope{
-		"tasks":  items,
+		"tasks":  tasks,
 		"limit":  filter.Limit,
 		"offset": filter.Offset,
 		"total":  total,
 	})
 }
 
-func (h *TaskHandler) HandleCreateTask(w http.ResponseWriter, r *http.Request) {
+func (h *taskHandler) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	logger := h.reqLogger(r)
 	start := time.Now()
 	status := http.StatusCreated
@@ -166,10 +161,10 @@ func (h *TaskHandler) HandleCreateTask(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 		logger.Info("task created", "task_id", result.Task.ID.String(), "task_type", result.Task.Type)
 	}
-	writeJSON(w, status, newTaskResponse(result.Task))
+	writeJSON(w, status, result.Task)
 }
 
-func (h *TaskHandler) HandleGetTaskById(w http.ResponseWriter, r *http.Request) {
+func (h *taskHandler) handleGetTaskById(w http.ResponseWriter, r *http.Request) {
 	logger := h.reqLogger(r)
 	start := time.Now()
 	status := http.StatusOK
@@ -202,10 +197,10 @@ func (h *TaskHandler) HandleGetTaskById(w http.ResponseWriter, r *http.Request) 
 		"task_status", task.Status,
 		"attempts", task.Attempts,
 	)
-	writeJSON(w, http.StatusOK, newTaskResponse(task))
+	writeJSON(w, http.StatusOK, task)
 }
 
-func (h *TaskHandler) HandleDeleteTask(w http.ResponseWriter, r *http.Request) {
+func (h *taskHandler) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 	logger := h.reqLogger(r)
 	start := time.Now()
 	status := http.StatusOK
@@ -234,17 +229,17 @@ func (h *TaskHandler) HandleDeleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch task.Status {
-	case "RUNNING":
+	case dhara.TaskStatusRunning:
 		status = http.StatusConflict
 		logger.Warn("cancel rejected for running task", "task_id", task.ID.String(), "task_status", task.Status)
 		writeJSON(w, status, envelope{
 			"error":  "task is currently running and cannot be canceled",
-			"status": "RUNNING",
+			"status": dhara.TaskStatusRunning,
 		})
-	case "CANCELED", "COMPLETED", "DEAD":
+	case dhara.TaskStatusCanceled, dhara.TaskStatusCompleted, dhara.TaskStatusDead:
 		status = http.StatusOK
 		logger.Info("task canceled or already terminal", "task_id", task.ID.String(), "task_status", task.Status)
-		writeJSON(w, status, newTaskResponse(task))
+		writeJSON(w, status, task)
 	default:
 		status = http.StatusInternalServerError
 		logger.Error("unexpected task status after cancel", "task_id", task.ID.String(), "task_status", task.Status)
@@ -252,7 +247,7 @@ func (h *TaskHandler) HandleDeleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *TaskHandler) HandleRetryDeadTask(w http.ResponseWriter, r *http.Request) {
+func (h *taskHandler) handleRetryDeadTask(w http.ResponseWriter, r *http.Request) {
 	logger := h.reqLogger(r)
 	start := time.Now()
 	status := http.StatusOK
@@ -287,12 +282,12 @@ func (h *TaskHandler) HandleRetryDeadTask(w http.ResponseWriter, r *http.Request
 	}
 
 	logger.Info("task retry requested", "task_id", task.ID.String(), "task_status", task.Status, "attempts", task.Attempts)
-	writeJSON(w, http.StatusOK, newTaskResponse(task))
+	writeJSON(w, http.StatusOK, task)
 }
 
-func (h *TaskHandler) reqLogger(r *http.Request) *slog.Logger {
+func (h *taskHandler) reqLogger(r *http.Request) *slog.Logger {
 	l := h.logger.With(
-		"component", "api",
+		"component", "server",
 		"handler", "task",
 		"method", r.Method,
 		"path", r.URL.Path,
@@ -303,7 +298,7 @@ func (h *TaskHandler) reqLogger(r *http.Request) *slog.Logger {
 	return l
 }
 
-func (h *TaskHandler) logRequestDone(log *slog.Logger, event string, status int, start time.Time, attrs ...any) {
+func (h *taskHandler) logRequestDone(log *slog.Logger, event string, status int, start time.Time, attrs ...any) {
 	base := []any{
 		"event", event,
 		"http_status", status,

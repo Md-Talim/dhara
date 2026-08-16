@@ -1,4 +1,4 @@
-package api
+package main
 
 import (
 	"context"
@@ -9,34 +9,34 @@ import (
 	"github.com/md-talim/dhara"
 )
 
-type MetricsHandler struct {
-	Client *dhara.Client
+type metricsHandler struct {
+	client *dhara.Client
 }
 
-func NewMetricsHandler(c *dhara.Client) *MetricsHandler {
-	return &MetricsHandler{Client: c}
+func newMetricsHandler(c *dhara.Client) *metricsHandler {
+	return &metricsHandler{client: c}
 }
 
-func (h *MetricsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *metricsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 
-	qm, err := h.Client.QueueMetrics(ctx)
+	qm, err := h.client.QueueMetrics(ctx)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "metrics unavailable")
 		return
 	}
 
-	m := h.Client.Metrics()
+	m := h.client.Metrics()
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
 	fmt.Fprintf(w, "# TYPE tasks_by_status gauge\n")
-	fmt.Fprintf(w, "tasks_by_status{status=\"PENDING\"} %d\n", qm.TasksPending)
-	fmt.Fprintf(w, "tasks_by_status{status=\"RUNNING\"} %d\n", qm.TasksRunning)
-	fmt.Fprintf(w, "tasks_by_status{status=\"COMPLETED\"} %d\n", qm.TasksCompleted)
-	fmt.Fprintf(w, "tasks_by_status{status=\"CANCELED\"} %d\n", qm.TasksCanceled)
-	fmt.Fprintf(w, "tasks_by_status{status=\"DEAD\"} %d\n", qm.TasksDead)
+	fmt.Fprintf(w, "tasks_by_status{status=\"%s\"} %d\n", dhara.TaskStatusPending, qm.TasksPending)
+	fmt.Fprintf(w, "tasks_by_status{status=\"%s\"} %d\n", dhara.TaskStatusRunning, qm.TasksRunning)
+	fmt.Fprintf(w, "tasks_by_status{status=\"%s\"} %d\n", dhara.TaskStatusCompleted, qm.TasksCompleted)
+	fmt.Fprintf(w, "tasks_by_status{status=\"%s\"} %d\n", dhara.TaskStatusCanceled, qm.TasksCanceled)
+	fmt.Fprintf(w, "tasks_by_status{status=\"%s\"} %d\n", dhara.TaskStatusDead, qm.TasksDead)
 
 	fmt.Fprintf(w, "# TYPE tasks_pending_breakdown gauge\n")
 	fmt.Fprintf(w, "tasks_pending_breakdown{status=\"ready\"} %d\n", qm.TasksPendingReady)

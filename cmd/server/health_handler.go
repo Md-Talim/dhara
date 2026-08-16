@@ -1,4 +1,4 @@
-package api
+package main
 
 import (
 	"context"
@@ -8,15 +8,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type HealthHandler struct {
-	start             time.Time
-	DB                *pgxpool.Pool
-	IsMigrationsReady func() bool
-	IsWorkerReady     func() bool
+type healthHandler struct {
+	start time.Time
+	db    *pgxpool.Pool
 }
 
-func NewHealthHandler(start time.Time, db *pgxpool.Pool) *HealthHandler {
-	return &HealthHandler{start: start, DB: db, IsMigrationsReady: nil, IsWorkerReady: nil}
+func newHealthHandler(start time.Time, db *pgxpool.Pool) *healthHandler {
+	return &healthHandler{start: start, db: db}
 }
 
 type checkResult struct {
@@ -30,7 +28,7 @@ type healthResponse struct {
 	Checks  map[string]any `json:"checks,omitempty"`
 }
 
-func (h *HealthHandler) CheckLiveness(w http.ResponseWriter, r *http.Request) {
+func (h *healthHandler) checkLiveness(w http.ResponseWriter, r *http.Request) {
 	resp := healthResponse{
 		Status:  "ok",
 		UptimeS: int64(time.Since(h.start).Seconds()),
@@ -38,7 +36,7 @@ func (h *HealthHandler) CheckLiveness(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *HealthHandler) CheckReadiness(w http.ResponseWriter, r *http.Request) {
+func (h *healthHandler) checkReadiness(w http.ResponseWriter, r *http.Request) {
 	resp := healthResponse{
 		Status:  "ok",
 		UptimeS: int64(time.Since(h.start).Seconds()),
@@ -49,7 +47,7 @@ func (h *HealthHandler) CheckReadiness(w http.ResponseWriter, r *http.Request) {
 
 	dbStart := time.Now()
 	dbCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	dbErr := h.DB.Ping(dbCtx)
+	dbErr := h.db.Ping(dbCtx)
 	cancel()
 
 	dbCheck := checkResult{
@@ -61,24 +59,6 @@ func (h *HealthHandler) CheckReadiness(w http.ResponseWriter, r *http.Request) {
 		overallFail = true
 	}
 	resp.Checks["db"] = dbCheck
-
-	if h.IsMigrationsReady != nil {
-		s := "ok"
-		if !h.IsMigrationsReady() {
-			s = "fail"
-			overallFail = true
-		}
-		resp.Checks["migrations"] = checkResult{Status: s}
-	}
-
-	if h.IsWorkerReady != nil {
-		s := "ok"
-		if !h.IsWorkerReady() {
-			s = "fail"
-			overallFail = true
-		}
-		resp.Checks["worker"] = checkResult{Status: s}
-	}
 
 	if overallFail {
 		resp.Status = "fail"
