@@ -201,23 +201,23 @@ type EnqueueResult struct {
 }
 ```
 
-### Option B: Run the pre-built binaries
+### Option B: Run the whole stack in 5 minutes
 
 Dhara ships as two independent binaries: the **Server** (HTTP API) and the **Worker** (task processor). They share the same database and can be scaled independently.
 
+**Easiest (one command):** starts Postgres in Docker, waits for it, applies migrations, then runs the server and worker together. Ctrl-C stops both:
+
 ```bash
-docker compose up db -d
-
-export DHARA_DATABASE_URL="postgres://dhara:dhara@localhost:5432/dhara?sslmode=disable"
-
-# Start the API Server
-go run ./cmd/server &
-
-# Start the Worker Process
-go run ./cmd/worker &
+make dev
 ```
 
-Both binaries auto-migrate on startup (`AUTO_MIGRATE=true` by default) using the migrations embedded in the library, nothing else to set up.
+**Or run the whole stack in containers with zero manual steps:**
+
+```bash
+docker compose up --build
+```
+
+This builds and starts Postgres, runs migrations via a dedicated one-shot `migrate` service, then starts the server (`http://localhost:8080`) and the worker. `docker compose down` stops everything.
 
 **Interact with the queue:**
 

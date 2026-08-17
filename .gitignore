@@ -29,6 +29,8 @@ go.work.sum
 *.tmp
 *.swp
 *.swo
+# air (hot-reload) build output
+tmp/
 
 # Go module cache (should not be committed)
 **/pkg/mod/

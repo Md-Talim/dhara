@@ -35,6 +35,54 @@ services:
             timeout: 3s
             retries: 5
 
+    # One-shot migrator: applies pending migrations, then exits 0.
+    # server and worker start only after it completes successfully.
+    migrate:
+        build:
+            context: .
+            dockerfile: Dockerfile
+            args:
+                BINARY: migrate
+        environment:
+            DHARA_DATABASE_URL: postgres://dhara:dhara@db:5432/dhara?sslmode=disable
+        depends_on:
+            db:
+                condition: service_healthy
+        restart: "no"
+
+    server:
+        container_name: dhara_server
+        build:
+            context: .
+            dockerfile: Dockerfile
+            args:
+                BINARY: server
+        ports:
+            - "8080:8080"
+        environment:
+            DHARA_DATABASE_URL: postgres://dhara:dhara@db:5432/dhara?sslmode=disable
+            AUTO_MIGRATE: "false"
+            PORT: "8080"
+        depends_on:
+            migrate:
+                condition: service_completed_successfully
+        restart: unless-stopped
+
+    worker:
+        container_name: dhara_worker
+        build:
+            context: .
+            dockerfile: Dockerfile
+            args:
+                BINARY: worker
+        environment:
+            DHARA_DATABASE_URL: postgres://dhara:dhara@db:5432/dhara?sslmode=disable
+            AUTO_MIGRATE: "false"
+        depends_on:
+            migrate:
+                condition: service_completed_successfully
+        restart: unless-stopped
+
 volumes:
     pgdata:
     pgdata_test:
