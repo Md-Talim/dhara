@@ -9,7 +9,7 @@ import (
 
 func TestOpen_Success(t *testing.T) {
 	ctx := context.Background()
-	pool, err := db.Open(ctx, "postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disable")
+	pool, err := db.Open(ctx, "postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disable", 2, 1)
 	if err != nil {
 		t.Fatalf("expected success, got error: %v", err)
 	}
@@ -18,7 +18,7 @@ func TestOpen_Success(t *testing.T) {
 
 func TestOpen_MissingEnv(t *testing.T) {
 	ctx := context.Background()
-	pool, err := db.Open(ctx, "")
+	pool, err := db.Open(ctx, "", 2, 1)
 	if err == nil {
 		pool.Close()
 		t.Fatalf("expected success, got error: %v", err)

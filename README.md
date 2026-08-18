@@ -279,6 +279,8 @@ The pre-built binaries are configured via environment variables. Library users c
 | Variable             | Default        | Description                                                              |
 | :------------------- | :------------- | :----------------------------------------------------------------------- |
 | `DHARA_DATABASE_URL` | _Required_     | PostgreSQL connection string                                             |
+| `DHARA_MAX_CONNS`    | `10`           | Maximum number of database connections in the pool                       |
+| `DHARA_MIN_CONNS`    | `2`            | Minimum number of database connections in the pool                       |
 | `AUTO_MIGRATE`       | `true`         | Automatically run embedded migrations on binary startup                  |
 | `PORT`               | `8080`         | Port for the HTTP API server                                             |
 | `WORKER_PREFIX`      | `dhara-worker` | Worker identity prefix                                                   |

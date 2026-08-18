@@ -36,6 +36,8 @@ func run() int {
 		logger:      logger,
 		autoMigrate: migCfg.AutoMigrate,
 		databaseURL: dbCfg.URL,
+		maxConns:    dbCfg.MaxConns,
+		minConns:    dbCfg.MinConns,
 	})
 	if err != nil {
 		logger.Error("failed to build application", "err", err)

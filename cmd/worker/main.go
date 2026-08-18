@@ -30,7 +30,7 @@ func run() int {
 	}
 
 	logger := logging.New(logCfg.Format, logCfg.Level)
-	pool, err := db.Open(context.Background(), dbCfg.URL)
+	pool, err := db.Open(context.Background(), dbCfg.URL, int32(dbCfg.MaxConns), int32(dbCfg.MinConns))
 	if err != nil {
 		logger.Error("failed to open database", "err", err)
 		return 1
@@ -67,6 +67,7 @@ func run() int {
 	worker.RegisterHandler("send_email", tasks.SendEmail)
 	worker.RegisterHandler("always_fail", tasks.AlwaysFails)
 	worker.RegisterHandler("slow_task", tasks.SlowTask)
+	worker.RegisterHandler("realistic_work", tasks.RealisticWork)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

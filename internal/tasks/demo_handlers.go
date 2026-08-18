@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/md-talim/dhara/internal/ctxlog"
@@ -60,6 +61,19 @@ func SlowTask(ctx context.Context, payload json.RawMessage) error {
 		return ctx.Err()
 	case <-time.After(10 * time.Minute):
 		logger.Warn("slow task complete")
+		return nil
+	}
+}
+
+func RealisticWork(ctx context.Context, payload json.RawMessage) error {
+	logger := ctxlog.From(ctx)
+	logger.Info("realistic_work handler", "payload", string(payload))
+
+	delay := 50*time.Millisecond + time.Duration(rand.Intn(150))*time.Millisecond
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(delay):
 		return nil
 	}
 }

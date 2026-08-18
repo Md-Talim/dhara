@@ -51,7 +51,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	ctx := context.Background()
-	pool, err := db.Open(ctx, dbCfg.URL)
+	pool, err := db.Open(ctx, dbCfg.URL, int32(dbCfg.MaxConns), int32(dbCfg.MinConns))
 	if err != nil {
 		return fmt.Errorf("failed to create db pool: %w", err)
 	}

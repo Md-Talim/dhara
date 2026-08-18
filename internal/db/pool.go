@@ -8,12 +8,22 @@ import (
 )
 
 // Open creates a pgx connection pool for the given PostgreSQL URL.
-func Open(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+// maxConns sets the maximum number of connections in the pool.
+func Open(ctx context.Context, databaseURL string, maxConns int32, minConns int32) (*pgxpool.Pool, error) {
 	if databaseURL == "" {
 		return nil, errors.New("missing database URL")
 	}
+	if maxConns < 1 {
+		maxConns = 24
+	}
+	if minConns < 1 {
+		minConns = 2
+	}
 
-	pool, err := pgxpool.New(ctx, databaseURL)
+	config, _ := pgxpool.ParseConfig(databaseURL)
+	config.MaxConns = maxConns
+	config.MinConns = minConns
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, err
 	}

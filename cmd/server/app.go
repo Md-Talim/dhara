@@ -29,6 +29,8 @@ type appDeps struct {
 	logger      *slog.Logger
 	autoMigrate bool
 	databaseURL string
+	maxConns    int
+	minConns    int
 }
 
 func newApplication(deps appDeps) (*application, error) {
@@ -36,7 +38,7 @@ func newApplication(deps appDeps) (*application, error) {
 		deps.logger = slog.Default()
 	}
 
-	pool, err := db.Open(context.Background(), deps.databaseURL)
+	pool, err := db.Open(context.Background(), deps.databaseURL, int32(deps.maxConns), int32(deps.minConns))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create db pool: %w", err)
 	}
