@@ -11,7 +11,7 @@ Use it two ways:
 - **As an embeddable library:** call `client.Enqueue(...)` from your application (even inside your own DB transaction) and run a `dhara.Worker` to execute tasks.
 - **As pre-built services:** `cmd/server` (HTTP API) and `cmd/worker` (task processor) are thin binaries assembled entirely from the library, so they can never drift from it.
 
-[Quick Start](#quick-start) • [Migrations](#migrations) • [Architecture](#architecture-and-task-lifecycle) • [Configuration](#configuration) • [API Reference](#api--observability-reference)
+[Quick Start](#quick-start) • [Migrations](#migrations) • [Architecture](#architecture-and-task-lifecycle) • [Benchmarks](#benchmarks) • [Configuration](#configuration) • [API Reference](#api--observability-reference)
 
 ## Engineering Highlights & Architectural Decisions
 
@@ -52,7 +52,7 @@ This project is built from scratch to demonstrate production-grade Go patterns, 
 Dhara uses PostgreSQL as the single source of truth for task state and execution logs.
 
 <p align="center">
-  <img src="assets/architecture.png" alt="Dhara architecture diagram" style="max-width: 100%; width: 800px;" />
+  <img src="assets/new-architecture.png" alt="Dhara architecture diagram" style="max-width: 100%; width: 800px;" />
 </p>
 
 ### The Task Lifecycle Flow
@@ -67,6 +67,47 @@ stateDiagram-v2
     PENDING --> CANCELED : Canceled via API
     RUNNING --> CANCELED : Canceled via API
 ```
+
+## Benchmarks
+
+Load tested with [k6](https://k6.io) against the HTTP API, backed by Postgres as the source of truth for what actually happened (task state, not just HTTP response codes).
+
+**Setup:** 20 workers, `realistic_work` handler simulating 50-200ms of I/O, i3 (11th gen) / 8GB RAM / 500GB SSD, `MaxConns=25`.
+
+### Finding a real bottleneck
+
+Predicted throughput from worker count × handler duration: ~160 tasks/sec. First measured result: ~20 tasks/sec.
+
+The cause was a claim loop that only attempted one claim per poll tick, regardless of how fast a task actually finished:
+
+```go
+select {
+case <-ticker.C:
+    processNext(ctx)
+}
+```
+
+20 workers × 1 claim/sec (1s poll interval) = 20/sec, the math matched the measurement almost exactly. Fixed by claiming continuously while work is available, and only falling back to the poll interval once the queue is empty. Re-measured: **~148 tasks/sec**, within a few percent of the original prediction.
+
+### Results
+
+| Submission rate | Worker utilization | p50   | p95   | p99   | Task loss |
+| :-------------- | :----------------- | :---- | :---- | :---- | :-------- |
+| 100 tasks/sec   | ~67% (headroom)    | 181ms | 299ms | 380ms | 0 / 6,001 |
+| ~148 tasks/sec  | ~100% (saturation) | 1.30s | 2.03s | 2.06s | 0 / 9,001 |
+
+Latency is end-to-end (`completed_at - created_at`), not just HTTP enqueue time, enqueue latency alone stayed under 10ms (p99) throughout every run, including the one bottlenecked at 20/sec, which is exactly why the completion-side bottleneck was invisible until checked directly against task state in Postgres rather than HTTP response times.
+
+At saturation, the jump in latency reflects queueing delay from running at the edge of worker capacity, not degraded correctness. Every run completed 100% of submitted tasks with zero loss, including a separate burst test that intentionally oversubmitted (120/sec against a then-20/sec ceiling, pre-fix) and fully recovered a 5,800-task backlog with zero losses once draining caught up.
+
+### Reproducing this
+
+```bash
+k6 run benchmarks/load-test.js
+watch -n 5 'psql "$DHARA_DATABASE_URL" -f benchmarks/drain-check.sql'
+```
+
+See [`benchmarks/RESULTS.md`](./benchmarks/RESULTS.md) for full methodology and raw data.
 
 ## Quick Start
 

@@ -14,7 +14,7 @@ func Open(ctx context.Context, databaseURL string, maxConns int32, minConns int3
 		return nil, errors.New("missing database URL")
 	}
 	if maxConns < 1 {
-		maxConns = 24
+		maxConns = 10
 	}
 	if minConns < 1 {
 		minConns = 2
