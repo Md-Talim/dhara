@@ -36,44 +36,55 @@ func (w *Worker) Start(ctx context.Context) {
 	defer ticker.Stop()
 
 	w.logger.Info("worker started", "worker_id", w.workerID)
+	defer w.logger.Info("worker stopping", "worker_id", w.workerID)
 
 	for {
-		select {
-		case <-ctx.Done():
-			w.logger.Info("worker stopping", "worker_id", w.workerID)
-			return
-		case <-ticker.C:
-			if err := w.processNext(ctx); err != nil {
-				w.logger.Error("process next task failed", "err", err)
+		task, err := w.claim(ctx)
+		if err != nil {
+			// No work available or context cancelled: wait before trying again.
+			select {
+			case <-ticker.C:
+				continue
+			case <-ctx.Done():
+				return
 			}
+		}
+
+		// Got a task: process it immediately, then loop back to claim again.
+		if err := w.execute(ctx, task); err != nil {
+			w.logger.Error("execute task failed", "err", err)
 		}
 	}
 }
 
-func (w *Worker) processNext(ctx context.Context) error {
+// claim attempts to acquire a pending task from the store.
+// Returns the task on success, or an error if no task is available or the claim failed.
+func (w *Worker) claim(ctx context.Context) (*store.TaskRow, error) {
 	task, err := w.store.Claim(ctx, w.workerID)
 	if errors.Is(err, store.ErrTaskNotAvailable) {
-		return nil // nothing to do
+		return nil, err
 	}
 	if err != nil {
-		return fmt.Errorf("claim task: %w", err)
+		return nil, fmt.Errorf("claim task: %w", err)
 	}
+	return task, nil
+}
 
+// execute runs the handler for a claimed task, manages heartbeats, and
+// persists the result (completed, retry, or dead).
+func (w *Worker) execute(ctx context.Context, task *store.TaskRow) error {
 	taskLogger := w.taskLogger(task)
 	handler, ok := w.registry.Get(task.Type)
 	if !ok {
 		taskLogger.Warn("no handler registered for task type")
-		err := w.store.MarkDead(ctx, task.ID.String(), w.workerID, "no handler registered for type: "+task.Type, "no handler registered")
-		if errors.Is(err, store.ErrTaskOwnershipLost) {
-			taskLogger.Warn("lost task ownership before marking dead")
-			return nil
+		if err := w.store.MarkDead(ctx, task.ID.String(), w.workerID, "no handler registered for type: "+task.Type, "no handler registered"); err != nil && !errors.Is(err, store.ErrTaskOwnershipLost) {
+			return err
 		}
-		return err
+		return nil
 	}
 
 	taskCtx, cancel := context.WithTimeout(context.Background(), w.handlerTimeout)
 	defer cancel()
-
 	taskCtx = ctxlog.WithLogger(taskCtx, taskLogger)
 
 	stopHeartbeat := w.startHeartbeat(taskCtx, task)
@@ -83,7 +94,7 @@ func (w *Worker) processNext(ctx context.Context) error {
 	defer w.metrics.WorkersInflight.Add(-1)
 
 	taskStartTime := time.Now()
-	if err = handler(taskCtx, task.Payload); err != nil {
+	if err := handler(taskCtx, task.Payload); err != nil {
 		return w.handleFailure(taskCtx, task, err)
 	}
 
