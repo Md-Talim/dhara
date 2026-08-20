@@ -10,9 +10,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/md-talim/dhara/internal/metrics"
-	"github.com/md-talim/dhara/internal/queue"
 	"github.com/md-talim/dhara/internal/store"
 	"github.com/md-talim/dhara/internal/tasks"
+	"github.com/md-talim/dhara/internal/worker"
 )
 
 type WorkerOption func(*workerConfig)
@@ -135,7 +135,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		return errors.New("dhara: worker already started")
 	}
 
-	wp := queue.NewWorkerPool(w.store, w.registry, w.config.logger, queue.Settings{
+	wp := worker.NewWorkerPool(w.store, w.registry, w.config.logger, worker.Settings{
 		WorkerPrefix:      w.config.workerPrefix,
 		Concurrency:       w.config.maxWorkers,
 		PollInterval:      w.config.pollInterval,
