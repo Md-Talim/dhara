@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/md-talim/dhara/dharatype"
 	"github.com/md-talim/dhara/internal/ctxlog"
 	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/store"
@@ -61,7 +62,7 @@ func (w *Worker) Start(ctx context.Context) {
 // Returns the task on success, or an error if no task is available or the claim failed.
 func (w *Worker) claim(ctx context.Context) (*store.TaskRow, error) {
 	task, err := w.store.Claim(ctx, w.workerID)
-	if errors.Is(err, store.ErrTaskNotAvailable) {
+	if errors.Is(err, dharatype.ErrTaskNotAvailable) {
 		return nil, err
 	}
 	if err != nil {
@@ -77,7 +78,8 @@ func (w *Worker) execute(ctx context.Context, task *store.TaskRow) error {
 	handler, ok := w.registry.Get(task.Type)
 	if !ok {
 		taskLogger.Warn("no handler registered for task type")
-		if err := w.store.MarkDead(ctx, task.ID.String(), w.workerID, "no handler registered for type: "+task.Type, "no handler registered"); err != nil && !errors.Is(err, store.ErrTaskOwnershipLost) {
+		err := w.store.MarkDead(ctx, task.ID.String(), w.workerID, "no handler registered for type: "+task.Type, "no handler registered")
+		if err != nil && !errors.Is(err, dharatype.ErrTaskOwnershipLost) {
 			return err
 		}
 		return nil
@@ -100,7 +102,7 @@ func (w *Worker) execute(ctx context.Context, task *store.TaskRow) error {
 
 	taskDurationMS := time.Since(taskStartTime).Milliseconds()
 	if err := w.store.MarkCompleted(taskCtx, task.ID.String(), w.workerID, taskDurationMS); err != nil {
-		if errors.Is(err, store.ErrTaskOwnershipLost) {
+		if errors.Is(err, dharatype.ErrTaskOwnershipLost) {
 			taskLogger.Warn("lost task ownership before marking completed")
 			return nil
 		}
@@ -125,7 +127,7 @@ func (w *Worker) startHeartbeat(heartbeatCtx context.Context, task *store.TaskRo
 				return
 			case <-ticker.C:
 				if err := w.store.Heartbeat(heartbeatCtx, task.ID.String(), w.workerID); err != nil {
-					if errors.Is(err, store.ErrTaskOwnershipLost) {
+					if errors.Is(err, dharatype.ErrTaskOwnershipLost) {
 						taskLogger.Warn("lost task ownership during heartbeat")
 					} else {
 						taskLogger.Warn("heartbeat failed", "err", err)
@@ -160,7 +162,7 @@ func (w *Worker) handleFailure(ctx context.Context, task *store.TaskRow, err err
 		}
 	}
 
-	if errors.Is(storeErr, store.ErrTaskOwnershipLost) {
+	if errors.Is(storeErr, dharatype.ErrTaskOwnershipLost) {
 		taskLogger.Warn("lost task ownership before persisting failure result")
 		return nil
 	}

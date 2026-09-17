@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/md-talim/dhara/dharatype"
 	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/store"
 )
@@ -36,7 +37,7 @@ func (c *Client) Insert(ctx context.Context, params InsertParams) (*EnqueueResul
 	task := params.toStoreTask()
 	created, err := c.store.Create(ctx, task)
 	if err != nil {
-		return nil, mapStoreError(err)
+		return nil, err
 	}
 
 	return &EnqueueResult{Task: newTask(task), Duplicate: !created}, nil
@@ -52,7 +53,7 @@ func (c *Client) InsertTx(ctx context.Context, tx pgx.Tx, params InsertParams) (
 	task := params.toStoreTask()
 	created, err := c.store.CreateTx(ctx, tx, task)
 	if err != nil {
-		return nil, mapStoreError(err)
+		return nil, err
 	}
 
 	return &EnqueueResult{Task: newTask(task), Duplicate: !created}, nil
@@ -77,10 +78,10 @@ func (c *Client) EnqueueTx(ctx context.Context, tx pgx.Tx, taskType string, payl
 func (c *Client) GetTask(ctx context.Context, id string) (*Task, error) {
 	task, err := c.store.GetById(ctx, id)
 	if err != nil {
-		return nil, mapStoreError(err)
+		return nil, err
 	}
 	if task == nil {
-		return nil, ErrTaskNotFound
+		return nil, dharatype.ErrTaskNotFound
 	}
 	return newTask(task), nil
 }
@@ -89,7 +90,7 @@ func (c *Client) GetTask(ctx context.Context, id string) (*Task, error) {
 func (c *Client) ListTasks(ctx context.Context, filter TaskListFilter) ([]Task, int, error) {
 	tasks, total, err := c.store.List(ctx, filter)
 	if err != nil {
-		return nil, 0, mapStoreError(err)
+		return nil, 0, err
 	}
 	out := make([]Task, len(tasks))
 	for i := range tasks {
@@ -102,7 +103,7 @@ func (c *Client) ListTasks(ctx context.Context, filter TaskListFilter) ([]Task, 
 func (c *Client) CancelTask(ctx context.Context, id string) (*Task, error) {
 	task, err := c.store.Cancel(ctx, id)
 	if err != nil {
-		return nil, mapStoreError(err)
+		return nil, err
 	}
 	return newTask(task), nil
 }
@@ -111,7 +112,7 @@ func (c *Client) CancelTask(ctx context.Context, id string) (*Task, error) {
 func (c *Client) RetryTask(ctx context.Context, id string) (*Task, error) {
 	task, err := c.store.RetryDead(ctx, id)
 	if err != nil {
-		return nil, mapStoreError(err)
+		return nil, err
 	}
 	return newTask(task), nil
 }
@@ -119,7 +120,7 @@ func (c *Client) RetryTask(ctx context.Context, id string) (*Task, error) {
 func (c *Client) QueueMetrics(ctx context.Context) (*QueueMetrics, error) {
 	qm, err := c.store.GetQueueDBMetrics(ctx)
 	if err != nil {
-		return nil, mapStoreError(err)
+		return nil, err
 	}
 	return &QueueMetrics{
 		TasksPending:        qm.TasksPending,

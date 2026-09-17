@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/md-talim/dhara/dharatype"
 	"github.com/md-talim/dhara/internal/db"
 	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/store"
@@ -247,7 +248,7 @@ func TestCreateTask_IdempotencyKey_DifferentPayload_ReturnsConflictError(t *test
 	}
 
 	_, err := testStore.Create(ctx, task2)
-	if err == nil || !errors.Is(err, store.ErrTaskConflict) {
+	if err == nil || !errors.Is(err, dharatype.ErrTaskConflict) {
 		t.Fatalf("expected ErrTaskConflict, got %v", err)
 	}
 }

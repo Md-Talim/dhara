@@ -128,7 +128,7 @@ func (ts *PostgresTaskStore) insertTask(ctx context.Context, exec DBTX, task *Ta
 			return false, err
 		}
 		if !bytes.Equal(existingTask.PayloadHash, payloadHash) {
-			return false, ErrTaskConflict
+			return false, dharatype.ErrTaskConflict
 		}
 
 		*task = *existingTask
@@ -266,7 +266,7 @@ func (ts *PostgresTaskStore) Cancel(ctx context.Context, id string) (*TaskRow, e
 		current, err := ts.GetById(ctx, id)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, ErrTaskNotFound // task not found
+				return nil, dharatype.ErrTaskNotFound // task not found
 			}
 			return nil, err
 		}
@@ -317,7 +317,7 @@ func (ts *PostgresTaskStore) Claim(ctx context.Context, workerID string) (*TaskR
 		&task.Attempts, &task.MaxRetries, &task.IdempotencyKey,
 	)
 	if err == pgx.ErrNoRows {
-		return nil, ErrTaskNotAvailable
+		return nil, dharatype.ErrTaskNotAvailable
 	}
 	if err != nil {
 		return nil, err
@@ -351,7 +351,7 @@ func (ts *PostgresTaskStore) Heartbeat(ctx context.Context, taskID, workerID str
 		return fmt.Errorf("hearbeat task: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrTaskOwnershipLost
+		return dharatype.ErrTaskOwnershipLost
 	}
 
 	return nil
@@ -381,7 +381,7 @@ func (ts *PostgresTaskStore) MarkCompleted(ctx context.Context, taskID, workerID
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, updateQuery, taskID, workerID).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTaskOwnershipLost
+			return dharatype.ErrTaskOwnershipLost
 		}
 		return fmt.Errorf("mark complete: %w", err)
 	}
@@ -424,7 +424,7 @@ func (ts *PostgresTaskStore) MarkPending(ctx context.Context, task *TaskRow, wor
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, query, task.ID, workerID, lastError, nextRunAt).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTaskOwnershipLost
+			return dharatype.ErrTaskOwnershipLost
 		}
 		return fmt.Errorf("mark pending: %w", err)
 	}
@@ -471,7 +471,7 @@ func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, workerID, las
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, updateQuery, taskID, workerID, lastError).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTaskOwnershipLost
+			return dharatype.ErrTaskOwnershipLost
 		}
 		return fmt.Errorf("mark dead: %w", err)
 	}
@@ -533,9 +533,9 @@ func (ts *PostgresTaskStore) RetryDead(ctx context.Context, taskID string) (*Tas
 				return nil, lookupErr
 			}
 			if existing == nil {
-				return nil, ErrTaskNotFound
+				return nil, dharatype.ErrTaskNotFound
 			}
-			return nil, ErrTaskNotDead
+			return nil, dharatype.ErrTaskNotDead
 		}
 		return nil, fmt.Errorf("retry dead task: %w", err)
 	}
