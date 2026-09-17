@@ -73,17 +73,13 @@ func (p *WorkerPool) Start(ctx context.Context) {
 		workerID := fmt.Sprintf("%s-%d", p.settings.WorkerPrefix, i+1)
 		w := p.newWorker(workerID)
 
-		p.wg.Add(1)
-		go func() {
-			defer p.wg.Done()
+		p.wg.Go(func() {
 			w.Start(p.ctx)
-		}()
+		})
 	}
 
 	reaperID := fmt.Sprintf("%s-reaper", p.settings.WorkerPrefix)
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
+	p.wg.Go(func() {
 		newReaper(
 			p.store,
 			p.logger,
@@ -91,7 +87,7 @@ func (p *WorkerPool) Start(ctx context.Context) {
 			p.settings.StaleThreshold,
 			reaperID,
 		).start(p.ctx)
-	}()
+	})
 }
 
 func (p *WorkerPool) Stop() {
