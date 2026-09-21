@@ -7,7 +7,28 @@ Use it two ways:
 - **As an embeddable library:** call `client.Enqueue(...)` from your application (even inside your own DB transaction) and run a `dhara.Worker` to execute tasks.
 - **As pre-built services:** `cmd/server` (HTTP API) and `cmd/worker` (task processor) are thin binaries assembled entirely from the library, so they can never drift from it.
 
-[Quick Start](#quick-start) • [Migrations](#migrations) • [Architecture](#architecture-and-task-lifecycle) • [Benchmarks](#benchmarks) • [Configuration](#configuration) • [API Reference](#api--observability-reference)
+[Quick Start](#quick-start) • [Migrations](#migrations) • [Highlights](#engineering-highlights--architectural-decisions) • [Benchmarks](#benchmarks) • [Configuration](#configuration) • [API Reference](#api--observability-reference)
+
+## Architecture and Task Lifecycle
+
+Dhara uses PostgreSQL as the single source of truth for task state and execution logs.
+
+<p align="center">
+  <img src="assets/architecture.png" alt="Dhara architecture diagram" style="max-width: 100%; width: 800px;" />
+</p>
+
+### The Task Lifecycle Flow
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING : Task Created (API / Client)
+    PENDING --> RUNNING : Claimed by Worker (SKIP LOCKED)
+    RUNNING --> COMPLETED : Execution Success
+    RUNNING --> PENDING : Execution Failure / Stale Heartbeat (Retry with Jitter)
+    RUNNING --> DEAD : Max Retries Exhausted
+    PENDING --> CANCELED : Canceled via API
+    RUNNING --> CANCELED : Canceled via API
+```
 
 ## Engineering Highlights & Architectural Decisions
 
@@ -42,27 +63,6 @@ This project is built from scratch to demonstrate production-grade Go patterns, 
 
     - **Structured Logging:** Uses the standard library `slog` for structured logging (available in both plain text and JSON formats for modern log aggregators).
     - **Graceful Shutdown:** Handles `SIGINT` / `SIGTERM` signals natively. On shutdown, it stops new task ingestion, allows active workers a configurable timeout to finish processing in-flight tasks, and gracefully drains database connection pools to prevent database state corruption.
-
-## Architecture and Task Lifecycle
-
-Dhara uses PostgreSQL as the single source of truth for task state and execution logs.
-
-<p align="center">
-  <img src="assets/architecture.png" alt="Dhara architecture diagram" style="max-width: 100%; width: 800px;" />
-</p>
-
-### The Task Lifecycle Flow
-
-```mermaid
-stateDiagram-v2
-    [*] --> PENDING : Task Created (API / Client)
-    PENDING --> RUNNING : Claimed by Worker (SKIP LOCKED)
-    RUNNING --> COMPLETED : Execution Success
-    RUNNING --> PENDING : Execution Failure / Stale Heartbeat (Retry with Jitter)
-    RUNNING --> DEAD : Max Retries Exhausted
-    PENDING --> CANCELED : Canceled via API
-    RUNNING --> CANCELED : Canceled via API
-```
 
 ## Benchmarks
 
@@ -399,16 +399,3 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 ```
 
 See [`internal/tasks/demo_handlers.go`](./internal/tasks/demo_handlers.go) for more examples.
-
-## Planned work
-
-- ~~stronger retry semantics with jitter~~
-- improved dead-letter handling
-- task execution histograms
-- better queue latency metrics
-- more complete health/readiness gates
-- richer operational dashboards
-- more robust cancellation semantics
-- stronger validation and test coverage
-- clearer startup and wiring structure
-- refactoring around application bootstrap and lifecycle management
