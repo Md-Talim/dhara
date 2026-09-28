@@ -6,8 +6,26 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 DB_SERVICE="${DB_SERVICE:-test_db}"
 DATABASE_URL="${DATABASE_URL:-postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disable}"
 
+# -----------------------------------------------------------------------------
+# Container-engine detection: docker compose, docker-compose, or podman-compose.
+# Tests only need the test_db service, so any of the three works.
+# -----------------------------------------------------------------------------
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    COMPOSE="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE="docker-compose"
+elif command -v podman-compose >/dev/null 2>&1; then
+    COMPOSE="podman-compose"
+else
+    echo "error: no container engine found (need docker compose, docker-compose, or podman-compose)." >&2
+    exit 1
+fi
+
+echo "Using compose engine: ${COMPOSE}"
+
 echo "Starting test database container: ${DB_SERVICE}"
-docker compose -f "${COMPOSE_FILE}" up -d "${DB_SERVICE}"
+# shellcheck disable=SC2086
+$COMPOSE -f "${COMPOSE_FILE}" up -d "${DB_SERVICE}"
 
 echo "Waiting for database to be ready..."
 ATTEMPTS=30
@@ -15,13 +33,18 @@ SLEEP_SECS=1
 i=1
 
 while [ "$i" -le "$ATTEMPTS" ]; do
-    if docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" pg_isready -U dhara -d dhara_test >/dev/null 2>&1; then
+    # shellcheck disable=SC2086
+    if $COMPOSE -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" pg_isready -U dhara -d dhara_test >/dev/null 2>&1; then
         echo "Database is ready."
         break
     fi
 
     if [ "$i" -eq "$ATTEMPTS" ]; then
         echo "Database did not become ready in time."
+        # shellcheck disable=SC2086
+        $COMPOSE -f "${COMPOSE_FILE}" stop "${DB_SERVICE}" || true
+        # shellcheck disable=SC2086
+        $COMPOSE -f "${COMPOSE_FILE}" rm -f "${DB_SERVICE}" || true
         exit 1
     fi
 
@@ -30,7 +53,12 @@ while [ "$i" -le "$ATTEMPTS" ]; do
 done
 
 echo "Running tests with DATABASE_URL=${DATABASE_URL}"
-DATABASE_URL="${DATABASE_URL}" go test ./... -v
+# -timeout guards against a wedged test hanging CI forever; -shuffle makes
+# ordering bugs (tests depending on rows left behind) reproducible.
+DATABASE_URL="${DATABASE_URL}" go test ./... -v -race -timeout=600s
 
-docker compose -f "${COMPOSE_FILE}" stop "${DB_SERVICE}"
-docker compose -f "${COMPOSE_FILE}" rm -f "${DB_SERVICE}"
+echo "Stopping test database container."
+# shellcheck disable=SC2086
+$COMPOSE -f "${COMPOSE_FILE}" stop "${DB_SERVICE}"
+# shellcheck disable=SC2086
+$COMPOSE -f "${COMPOSE_FILE}" rm -f "${DB_SERVICE}"
