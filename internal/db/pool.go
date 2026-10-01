@@ -20,7 +20,10 @@ func Open(ctx context.Context, databaseURL string, maxConns int32, minConns int3
 		minConns = 2
 	}
 
-	config, _ := pgxpool.ParseConfig(databaseURL)
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, err
+	}
 	config.MaxConns = maxConns
 	config.MinConns = minConns
 	pool, err := pgxpool.NewWithConfig(ctx, config)

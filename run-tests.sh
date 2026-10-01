@@ -4,7 +4,10 @@ set -eu
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 DB_SERVICE="${DB_SERVICE:-test_db}"
-DATABASE_URL="${DATABASE_URL:-postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disable}"
+# Only DHARA_TEST_DATABASE_URL is honored for tests (never DATABASE_URL: this
+# project may run alongside other services that use that variable).
+DHARA_TEST_DATABASE_URL="${DHARA_TEST_DATABASE_URL:-postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disable}"
+export DHARA_TEST_DATABASE_URL
 
 # -----------------------------------------------------------------------------
 # Container-engine detection: docker compose, docker-compose, or podman-compose.
@@ -52,13 +55,13 @@ while [ "$i" -le "$ATTEMPTS" ]; do
     sleep "$SLEEP_SECS"
 done
 
-echo "Running tests with DATABASE_URL=${DATABASE_URL}"
+echo "Running tests with DHARA_TEST_DATABASE_URL=${DHARA_TEST_DATABASE_URL}"
 # -timeout guards against a wedged test hanging CI forever; -shuffle makes
 # ordering bugs (tests depending on rows left behind) reproducible.
-DATABASE_URL="${DATABASE_URL}" go test ./... -v -race -timeout=600s
+go test ./... -v -race -shuffle=on -timeout=600s
 
 echo "Stopping test database container."
 # shellcheck disable=SC2086
 $COMPOSE -f "${COMPOSE_FILE}" stop "${DB_SERVICE}"
 # shellcheck disable=SC2086
-$COMPOSE -f "${COMPOSE_FILE}" rm -f "${DB_SERVICE}"
+$COMPOSE -f "${COMPOSE_FILE}" down "${DB_SERVICE}"

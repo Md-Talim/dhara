@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
+	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/md-talim/dhara/internal/db"
 	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/store"
+	"github.com/md-talim/dhara/internal/testutil"
 	"github.com/md-talim/vow"
 )
 
@@ -22,6 +25,14 @@ var testStore store.TaskStore
 var testDB *pgxpool.Pool
 
 func TestMain(m *testing.M) {
+	// The whole package is DB-backed, so -short skips it entirely: this is
+	// what makes `go test -short ./...` a fast, Docker-free unit loop.
+	flag.Parse() // required before testing.Short in TestMain
+	if testing.Short() {
+		fmt.Println("skipping DB-backed store tests in -short mode")
+		os.Exit(0)
+	}
+
 	ctx := context.Background()
 
 	db, err := setupTestDB(ctx)
@@ -310,7 +321,7 @@ func TestGetTaskById_NotFound(t *testing.T) {
 }
 
 func setupTestDB(ctx context.Context) (*pgxpool.Pool, error) {
-	pool, err := db.Open(ctx, "postgres://dhara:dhara@localhost:5433/dhara_test?sslmode=disable", 10, 2)
+	pool, err := db.Open(ctx, testutil.TestDBURL(), 10, 2)
 	if err != nil {
 		return nil, err
 	}

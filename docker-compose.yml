@@ -20,7 +20,7 @@ services:
     test_db:
         container_name: dhara_db_test
         image: postgres:16-alpine
-        restart: no
+        restart: "no"
         environment:
             POSTGRES_DB: dhara_test
             POSTGRES_USER: dhara
