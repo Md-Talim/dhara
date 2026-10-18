@@ -1,13 +1,13 @@
 # dhara
 
-**Dhara** is a lightweight, production-focused distributed task queue library and service for Go, backed by PostgreSQL. Designed for simplicity, reliability, and high visibility, Dhara handles the complete task queue lifecycle without requiring heavy external dependencies like Redis or RabbitMQ.
+Dhara is a distributed task queue library and service for Go, backed by PostgreSQL. It covers the full task lifecycle: enqueue, claim, retry, dead-letter. No external dependencies like Redis or RabbitMQ.
 
 Use it two ways:
 
 - **As an embeddable library:** call `client.Enqueue(...)` from your application (even inside your own DB transaction) and run a `dhara.Worker` to execute tasks.
 - **As pre-built services:** `cmd/server` (HTTP API) and `cmd/worker` (task processor) are thin binaries assembled entirely from the library, so they can never drift from it.
 
-[Quick Start](#quick-start) • [Migrations](#migrations) • [Highlights](#engineering-highlights--architectural-decisions) • [Benchmarks](#benchmarks) • [Configuration](#configuration) • [API Reference](#api--observability-reference)
+[Quick Start](#quick-start) • [Migrations](#migrations) • [Design](#design-decisions) • [Benchmarks](#benchmarks) • [Configuration](#configuration) • [API Reference](#api--observability-reference)
 
 ## Architecture and Task Lifecycle
 
@@ -30,39 +30,23 @@ stateDiagram-v2
     RUNNING --> CANCELED : Canceled via API
 ```
 
-## Engineering Highlights & Architectural Decisions
+## Design Decisions
 
-This project is built from scratch to demonstrate production-grade Go patterns, reliable system design, and strict transactional guarantees.
+1. **Atomic concurrency with PostgreSQL (`SKIP LOCKED`)**
 
-1. **Atomic Concurrency with PostgreSQL (`SKIP LOCKED`)**
+    Task claiming uses transactional `SELECT ... FOR UPDATE SKIP LOCKED` instead of an external lock manager or broker. Multiple workers poll concurrently, each pending task is claimed by exactly one worker, and workers never block waiting on the same row.
 
-    Instead of using external distributed lock managers, Dhara utilizes PostgreSQL as a highly concurrent queue broker. Task claiming is implemented using transactional **`SELECT ... FOR UPDATE SKIP LOCKED`** operations. This guarantees that:
+2. **Failure recovery: heartbeats and the reaper**
 
-    - Multiple horizontal workers can poll the database concurrently without race conditions.
-    - Each pending task is claimed atomically by exactly one worker.
-    - Lock contention is completely avoided, maintaining high throughput.
+    Workers periodically update a heartbeat for the task they're running. A background reaper then finds tasks that have missed their heartbeat window and atomically requeues them (incrementing the attempt counter), or moves them to a dead-letter state once retries are exhausted.
 
-2. **Failure Recovery: Heartbeats & The Reaper Pattern**
+3. **Retries with full jitter**
 
-    Distributed workers can crash, lose network connectivity, or experience hardware failures. Dhara ensures task execution safely through a dual-mechanism recovery pattern:
+    Failed tasks retry on an exponential backoff with full jitter, which spreads retries across a safe window and keeps a thundering herd away from downstream services.
 
-    - **Heartbeating:** Running worker goroutines periodically update task heartbeats in the database.
-    - **The Reaper:** A background process detects stale tasks that have missed their heartbeat window. Depending on the configuration, the reaper atomically requeues the task (incrementing its attempt counter) or moves it to a dead-letter state once max retries are exhausted.
+4. **Transactional Enqueue (`EnqueueTx`)**
 
-3. **Resilient Retries with Full Jitter**
-
-    To prevent the "thundering herd" problem when retrying failed tasks, Dhara implements an exponential backoff retry algorithm augmented with **Full Jitter**. This spreads out retry attempts randomly across a safe window, protecting downstream databases and services from traffic spikes.
-
-4. **Transactional Enqueue (`InsertTx`)**
-
-    Tasks can be inserted inside the caller's transaction, so a task is committed atomically with the business writes that produced it; the task never exists without its trigger, and never survives a rollback. Idempotency is enforced with `INSERT ... ON CONFLICT DO NOTHING` so a conflicting replay never aborts the caller's transaction.
-
-5. **Zero-Dependency & Clean Architecture: Standard Library Routing**
-
-    Implements standard HTTP routing using Go 1.22's enhanced standard library `http.ServeMux`, keeping the binary footprint small and eliminating external framework bloat.
-
-    - **Structured Logging:** Uses the standard library `slog` for structured logging (available in both plain text and JSON formats for modern log aggregators).
-    - **Graceful Shutdown:** Handles `SIGINT` / `SIGTERM` signals natively. On shutdown, it stops new task ingestion, allows active workers a configurable timeout to finish processing in-flight tasks, and gracefully drains database connection pools to prevent database state corruption.
+    `EnqueueTx` inserts the task inside your existing transaction, so it commits atomically with the business writes that produced it: the task never exists without its trigger, and never survives a rollback. Idempotency uses `INSERT ... ON CONFLICT DO NOTHING`, so a duplicate replay never aborts the caller's transaction.
 
 ## Benchmarks
 
