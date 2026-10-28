@@ -601,3 +601,89 @@ func TestWorker_FieldsWired(t *testing.T) {
 		t.Error("backoff fields must be positive")
 	}
 }
+
+// panic within the retry budget requeues the task as PENDING and records
+// the panic in last_error
+func TestExecute_HandlerPanics_RequeuesInsteadOfCrashing(t *testing.T) {
+	w := newTestWorker(map[string]tasks.HandlerFunc{
+		"panicky_task": func(ctx context.Context, payload json.RawMessage) error {
+			panic("boom: nil map write")
+		},
+	})
+
+	fs := w.store.(*fakeStore)
+	row := fs.seed(t, "panicky_task", 0, 5)
+
+	// If the panic escapes execute, this line crashes the test binary.
+	runOneCycle(t, w)
+
+	got := fs.row(row.ID)
+	if got.Status != "PENDING" {
+		t.Fatalf("status = %q, want PENDING (panic must be retried, not crash the worker)", got.Status)
+	}
+	if got.LastError == nil || !strings.Contains(*got.LastError, "panicked") {
+		t.Errorf("last_error = %v, want it to mention the panic", got.LastError)
+	}
+	if got.LastError == nil || !strings.Contains(*got.LastError, "boom: nil map write") {
+		t.Errorf("last_error = %v, want the panic value preserved", got.LastError)
+	}
+}
+
+// panic with attempts exhausted transitions the task to DEAD
+func TestExecute_HandlerPanics_ExhaustsRetries_MarksDead(t *testing.T) {
+	w := newTestWorker(map[string]tasks.HandlerFunc{
+		"panicky_task": func(ctx context.Context, payload json.RawMessage) error {
+			panic("always fails")
+		},
+	})
+
+	fs := w.store.(*fakeStore)
+	// Seeded at 1/2, so this attempt is 2/2 => DEAD.
+	row := fs.seed(t, "panicky_task", 1, 2)
+
+	runOneCycle(t, w)
+
+	if got := fs.row(row.ID); got.Status != "DEAD" {
+		t.Fatalf("status = %q, want DEAD after max retries", got.Status)
+	}
+}
+
+// the start loop keeps processing healthy tasks while a poison task
+// panics and dies
+func TestStart_PanickingTaskDoesNotStopWorker(t *testing.T) {
+	w := newTestWorker(map[string]tasks.HandlerFunc{
+		"poison": func(ctx context.Context, payload json.RawMessage) error {
+			panic("poison payload")
+		},
+		"ok": func(ctx context.Context, payload json.RawMessage) error { return nil },
+	})
+
+	fs := w.store.(*fakeStore)
+	poison := fs.seed(t, "poison", 0, 1) // one attempt => DEAD
+	good := fs.seed(t, "ok", 0, 3)
+	w.pollInterval = time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.Start(ctx)
+	}()
+
+	// The poison task must die; the healthy task must still complete.
+	eventually(t, 2*time.Second, func() bool {
+		return fs.row(poison.ID).Status == "DEAD" &&
+			fs.row(good.ID).Status == "COMPLETED"
+	})
+
+	cancel()
+	<-done
+
+	if w.metrics.TasksDeadTotal.Load() != 1 {
+		t.Errorf("TasksDeadTotal = %d, want 1", w.metrics.TasksDeadTotal.Load())
+	}
+	if w.metrics.TasksCompletedTotal.Load() != 1 {
+		t.Errorf("TasksCompletedTotal = %d, want 1 (worker must survive the panic)",
+			w.metrics.TasksCompletedTotal.Load())
+	}
+}

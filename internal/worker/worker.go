@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"math/rand"
+	"runtime/debug"
 	"time"
 
 	"github.com/md-talim/dhara/dharatype"
@@ -96,7 +97,7 @@ func (w *Worker) execute(ctx context.Context, task *store.TaskRow) error {
 	defer w.metrics.WorkersInflight.Add(-1)
 
 	taskStartTime := time.Now()
-	if err := handler(taskCtx, task.Payload); err != nil {
+	if err := w.runTaskHandler(taskCtx, task, handler); err != nil {
 		return w.handleFailure(taskCtx, task, err)
 	}
 
@@ -111,6 +112,20 @@ func (w *Worker) execute(ctx context.Context, task *store.TaskRow) error {
 
 	taskLogger.Info("task completed", "duration_ms", taskDurationMS)
 	return nil
+}
+
+// runTaskHandler invokes the handler with a panic guard. A panic in user code is
+// converted into an ordinary handler error so it flows through the normal
+// retry/backoff/dead-letter path instead of terminating the process.
+func (w *Worker) runTaskHandler(ctx context.Context, task *store.TaskRow, handler tasks.HandlerFunc) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("handler panicked: %v", r)
+			w.taskLogger(task).Error("handler panicked", "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+
+	return handler(ctx, task.Payload)
 }
 
 func (w *Worker) startHeartbeat(heartbeatCtx context.Context, task *store.TaskRow) func() {
