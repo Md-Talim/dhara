@@ -572,7 +572,7 @@ func (ts *PostgresTaskStore) RequeueStaleRunning(ctx context.Context, staleThres
 			FROM tasks
 			WHERE
 				status = 'RUNNING'
-				AND locked_at < (now() - $1::interval)
+				AND locked_at < (now() - make_interval(secs => $1))
 			FOR UPDATE SKIP LOCKED
 		),
 		to_dead AS (
@@ -617,7 +617,7 @@ func (ts *PostgresTaskStore) RequeueStaleRunning(ctx context.Context, staleThres
 		FROM to_pending
 	`
 
-	rows, err := tx.Query(ctx, query, staleThreshold.String())
+	rows, err := tx.Query(ctx, query, staleThreshold.Seconds())
 	if err != nil {
 		return 0, fmt.Errorf("requeue stale running: %w", err)
 	}
