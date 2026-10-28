@@ -623,44 +623,50 @@ func (ts *PostgresTaskStore) RequeueStaleRunning(ctx context.Context, staleThres
 	}
 	defer rows.Close()
 
-	var changed int64
+	type reapedTask struct {
+		id         uuid.UUID
+		status     string
+		attempts   int
+		maxRetries int
+		lockedBy   string
+	}
+
+	var reaped []reapedTask
 	for rows.Next() {
-		var (
-			taskID     uuid.UUID
-			newStatus  string
-			attempts   int
-			maxRetries int
-			lockedBy   string
-		)
-		if err := rows.Scan(&taskID, &newStatus, &attempts, &maxRetries, &lockedBy); err != nil {
+		var r reapedTask
+		if err := rows.Scan(&r.id, &r.status, &r.attempts, &r.maxRetries, &r.lockedBy); err != nil {
 			return 0, fmt.Errorf("scan reaped row: %w", err)
 		}
+		reaped = append(reaped, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate reaped rows: %w", err)
+	}
+	rows.Close()
 
+	var changed int64
+	for _, r := range reaped {
 		var msg string
-		switch newStatus {
+		switch r.status {
 		case "PENDING":
 			msg = fmt.Sprintf(
 				"reaped by %s: stale heartbeat; previous worker=%s; attempt %d/%d requeued",
-				reaperID, lockedBy, attempts, maxRetries,
+				reaperID, r.lockedBy, r.attempts, r.maxRetries,
 			)
 		case "DEAD":
 			msg = fmt.Sprintf(
 				"reaped by %s: stale heartbeat; previous worker=%s; attempt exhausted (%d/%d)",
-				reaperID, lockedBy, attempts, maxRetries,
+				reaperID, r.lockedBy, r.attempts, r.maxRetries,
 			)
 		default:
 			msg = fmt.Sprintf("reaped by %s: stale heartbeat", reaperID)
 		}
 
-		if err := ts.insertLog(ctx, tx, taskID.String(), newStatus, msg); err != nil {
+		if err := ts.insertLog(ctx, tx, r.id.String(), r.status, msg); err != nil {
 			return 0, fmt.Errorf("insert reaper log: %w", err)
 		}
 
 		changed++
-	}
-
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("iterate reaped rows: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
