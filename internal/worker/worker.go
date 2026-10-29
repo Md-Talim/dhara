@@ -141,15 +141,17 @@ func (w *Worker) startHeartbeat(heartbeatCtx context.Context, task *store.TaskRo
 			case <-heartbeatCtx.Done():
 				return
 			case <-ticker.C:
-				if err := w.store.Heartbeat(heartbeatCtx, task.ID.String(), w.workerID); err != nil {
-					if errors.Is(err, dharatype.ErrTaskOwnershipLost) {
-						taskLogger.Warn("lost task ownership during heartbeat")
-					} else {
-						taskLogger.Warn("heartbeat failed", "err", err)
-					}
+				err := w.store.Heartbeat(heartbeatCtx, task.ID.String(), w.workerID)
+				if err == nil {
+					continue
+				}
+				if errors.Is(err, dharatype.ErrTaskOwnershipLost) {
+					taskLogger.Warn("lost task ownership during heartbeat")
 					cancel()
 					return
 				}
+				// Transient (pool timeout, connection reset): keep beating.
+				taskLogger.Warn("heartbeat failed, will retry next tick", "err", err)
 			}
 		}
 	}()

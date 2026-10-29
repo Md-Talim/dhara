@@ -461,6 +461,62 @@ func TestExecute_HandlerTimeout_CancelsHandlerContext(t *testing.T) {
 	}
 }
 
+// flakyHeartbeatStore fails the first N heartbeat calls, then succeeds.
+// It embeds fakeStore so every other TaskStore method is unchanged.
+type flakyHeartbeatStore struct {
+	*fakeStore
+	mu       sync.Mutex
+	calls    int
+	failures int
+}
+
+func (f *flakyHeartbeatStore) Heartbeat(ctx context.Context, taskID, workerID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.calls <= f.failures {
+		return errors.New("transient: connection reset by peer")
+	}
+	return nil
+}
+
+func (f *flakyHeartbeatStore) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+var _ store.TaskStore = (*flakyHeartbeatStore)(nil)
+
+// One transient heartbeat error must not end the loop for the rest of the
+// task's run; otherwise the task goes stale and gets reaped while still
+// executing, which is duplicate execution.
+func TestStartHeartbeat_TransientErrorDoesNotStopBeating(t *testing.T) {
+	m := metrics.New()
+	fs := newFakeStore(m)
+	flaky := &flakyHeartbeatStore{fakeStore: fs, failures: 1}
+
+	w := buildWorker(flaky, m, map[string]tasks.HandlerFunc{
+		"long_task": func(ctx context.Context, payload json.RawMessage) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	})
+	w.heartbeatInterval = 5 * time.Millisecond
+	w.handlerTimeout = 150 * time.Millisecond
+
+	fs.seed(t, "long_task", 0, 5)
+	task := claimOne(t, w)
+
+	if err := w.execute(context.Background(), task); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if got := flaky.callCount(); got < 3 {
+		t.Errorf("heartbeat calls = %d, want >= 3; the loop stopped after a transient error", got)
+	}
+}
+
 // Backoff policy: full jitter, bounded by [0, cap] where cap grows
 // exponentially per attempt.
 
