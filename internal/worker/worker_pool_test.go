@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -150,5 +152,70 @@ func TestWorkerPool_WaitRespectsContextTimeout(t *testing.T) {
 	defer waitCancel()
 	if err := pool.Wait(waitCtx); err != nil {
 		t.Fatalf("pool.Wait() = %v, want nil (workers should exit on ctx cancel)", err)
+	}
+}
+
+func TestWorkerPool_StopCancelsInFlightHandlerAndRequeues(t *testing.T) {
+	m := metrics.New()
+	fs := newFakeStore(m)
+
+	started := make(chan struct{})
+	cancelled := make(chan error, 1)
+
+	reg := tasks.NewRegistry(nil)
+	reg.Add("blocking", func(ctx context.Context, payload json.RawMessage) error {
+		close(started)
+		<-ctx.Done()
+		cancelled <- ctx.Err()
+		return ctx.Err()
+	})
+
+	row := fs.seed(t, "blocking", 0, 5)
+
+	pool := NewWorkerPool(
+		fs,
+		reg,
+		nil,
+		Settings{
+			WorkerPrefix:      "test-shutdown",
+			Concurrency:       1,
+			PollInterval:      5 * time.Millisecond,
+			HeartbeatInterval: time.Hour,
+			ReaperInterval:    time.Hour,
+			HandlerTimeout:    5 * time.Minute, 
+		},
+		m,
+	)
+
+	ctx := t.Context()
+	pool.Start(ctx)
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never started")
+	}
+
+	pool.Stop()
+
+	select {
+	case err := <-cancelled:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("handler ctx err = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight handler was not cancelled by Stop")
+	}
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer waitCancel()
+	if err := pool.Wait(waitCtx); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+
+	// The cancelled attempt must be recorded at shutdown, not left RUNNING
+	// for the reaper to rediscover later.
+	if got := fs.row(row.ID); got.Status != "PENDING" {
+		t.Errorf("status = %q, want PENDING after shutdown cancellation", got.Status)
 	}
 }

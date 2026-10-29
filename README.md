@@ -38,7 +38,7 @@ stateDiagram-v2
 
 2. **Failure recovery: heartbeats and the reaper**
 
-    Workers periodically update a heartbeat for the task they're running. A background reaper then finds tasks that have missed their heartbeat window and atomically requeues them (incrementing the attempt counter), or moves them to a dead-letter state once retries are exhausted.
+    Workers periodically update a heartbeat for the task they're running. A background reaper then finds tasks that have missed their heartbeat window and atomically requeues them (the attempt was already counted when the task was claimed), or moves them to a dead-letter state once retries are exhausted.
 
 3. **Retries with full jitter**
 
@@ -47,6 +47,10 @@ stateDiagram-v2
 4. **Transactional Enqueue (`EnqueueTx`)**
 
     `EnqueueTx` inserts the task inside your existing transaction, so it commits atomically with the business writes that produced it: the task never exists without its trigger, and never survives a rollback. Idempotency uses `INSERT ... ON CONFLICT DO NOTHING`, so a duplicate replay never aborts the caller's transaction.
+
+5. **At-least-once delivery**
+
+    Tasks are guaranteed to run at least once, not exactly once. Failed attempts retry with backoff, stale heartbeats are reaped, and handlers still running during shutdown are cancelled and their tasks requeued. A handler can therefore see the same task more than once, so it must be idempotent, for example by deduplicating on the task ID or an idempotency key. Enqueue-side idempotency prevents duplicate submission, not duplicate execution. Handlers should honor `ctx.Done()`; one that ignores cancellation delays shutdown until `SHUTDOWN_TIMEOUT`.
 
 ## Benchmarks
 
@@ -175,7 +179,7 @@ if err := tx.Commit(ctx); err != nil {
 }
 ```
 
-**3. Run a worker to execute tasks.** A `Worker` owns the goroutine pool, heartbeats, and the reaper. `Start` blocks until the context is cancelled, then drains in-flight work.
+**3. Run a worker to execute tasks.** A `Worker` owns the goroutine pool, heartbeats, and the reaper. `Start` blocks until the context is cancelled, then cancels in-flight handlers and returns; interrupted tasks are requeued for redelivery.
 
 ```go
 worker := dhara.NewWorker(pool,
@@ -313,7 +317,7 @@ The pre-built binaries are configured via environment variables. Library users c
 | `REAPER_INTERVAL`    | `30s`          | How often the reaper scans for stuck tasks                               |
 | `BASE_BACKOFF`       | `1s`           | Initial retry backoff (exponential with full jitter)                     |
 | `MAX_BACKOFF`        | `5m`           | Maximum retry backoff                                                    |
-| `SHUTDOWN_TIMEOUT`   | `30s`          | Maximum time allowed to drain active tasks on shutdown                   |
+| `SHUTDOWN_TIMEOUT`   | `30s`          | Maximum time to wait for workers to exit after shutdown                  |
 | `LOG_LEVEL`          | `info`         | Logging verbosity (`debug`, `info`, `warn`, `error`)                     |
 | `LOG_FORMAT`         | `text`         | Structured log output style (`text` or `json`)                           |
 

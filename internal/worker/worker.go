@@ -94,7 +94,7 @@ func (w *Worker) execute(ctx context.Context, task *store.TaskRow) error {
 		return nil
 	}
 
-	taskCtx, cancel := context.WithTimeout(context.Background(), w.handlerTimeout)
+	taskCtx, cancel := context.WithTimeout(ctx, w.handlerTimeout)
 	defer cancel()
 	taskCtx = ctxlog.WithLogger(taskCtx, taskLogger)
 
