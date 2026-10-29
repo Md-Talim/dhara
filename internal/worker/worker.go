@@ -17,6 +17,12 @@ import (
 	"github.com/md-talim/dhara/internal/tasks"
 )
 
+// persistTimeout bounds the terminal store write (MarkCompleted/MarkPending/
+// MarkDead). It is deliberately independent of the handler deadline: a
+// handler that consumed its whole budget must still be able to record its
+// outcome instead of leaving the row RUNNING for the reaper.
+const persistTimeout = 10 * time.Second
+
 type Worker struct {
 	workerID          string
 	store             store.TaskStore
@@ -79,7 +85,9 @@ func (w *Worker) execute(ctx context.Context, task *store.TaskRow) error {
 	handler, ok := w.registry.Get(task.Type)
 	if !ok {
 		taskLogger.Warn("no handler registered for task type")
-		err := w.store.MarkDead(ctx, task.ID.String(), w.workerID, "no handler registered for type: "+task.Type, "no handler registered")
+		persistCtx, cancel := w.persistContext(task)
+		defer cancel()
+		err := w.store.MarkDead(persistCtx, task.ID.String(), w.workerID, "no handler registered for type: "+task.Type, "no handler registered")
 		if err != nil && !errors.Is(err, dharatype.ErrTaskOwnershipLost) {
 			return err
 		}
@@ -97,12 +105,17 @@ func (w *Worker) execute(ctx context.Context, task *store.TaskRow) error {
 	defer w.metrics.WorkersInflight.Add(-1)
 
 	taskStartTime := time.Now()
-	if err := w.runTaskHandler(taskCtx, task, handler); err != nil {
-		return w.handleFailure(taskCtx, task, err)
+	handlerErr := w.runTaskHandler(taskCtx, task, handler)
+
+	persistCtx, cancelPersist := w.persistContext(task)
+	defer cancelPersist()
+
+	if handlerErr != nil {
+		return w.handleFailure(persistCtx, task, handlerErr)
 	}
 
 	taskDurationMS := time.Since(taskStartTime).Milliseconds()
-	if err := w.store.MarkCompleted(taskCtx, task.ID.String(), w.workerID, taskDurationMS); err != nil {
+	if err := w.store.MarkCompleted(persistCtx, task.ID.String(), w.workerID, taskDurationMS); err != nil {
 		if errors.Is(err, dharatype.ErrTaskOwnershipLost) {
 			taskLogger.Warn("lost task ownership before marking completed")
 			return nil
@@ -197,6 +210,14 @@ func (w *Worker) taskLogger(task *store.TaskRow) *slog.Logger {
 		"attempts", task.Attempts,
 		"max_retries", task.MaxRetries,
 	)
+}
+
+// persistContext returns a fresh, bounded context for a terminal store write,
+// tagged with the task logger. It must not derive from the handler context:
+// that one may already be expired by the time we need to persist.
+func (w *Worker) persistContext(task *store.TaskRow) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), persistTimeout)
+	return ctxlog.WithLogger(ctx, w.taskLogger(task)), cancel
 }
 
 func (w *Worker) computeBackoff(attempts int) time.Duration {

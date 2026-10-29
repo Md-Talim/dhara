@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -741,5 +742,64 @@ func TestStart_PanickingTaskDoesNotStopWorker(t *testing.T) {
 	if w.metrics.TasksCompletedTotal.Load() != 1 {
 		t.Errorf("TasksCompletedTotal = %d, want 1 (worker must survive the panic)",
 			w.metrics.TasksCompletedTotal.Load())
+	}
+}
+
+// ctxAwareStore fails terminal writes on an expired context, matching
+// PostgresTaskStore (and pgx). The plain fake ignores ctx, which is exactly
+// why reusing the handler's dead context went unnoticed.
+type ctxAwareStore struct {
+	*fakeStore
+}
+
+func (s *ctxAwareStore) MarkCompleted(ctx context.Context, taskID, workerID string, durationMS int64) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("mark completed: %w", err)
+	}
+	return s.fakeStore.MarkCompleted(ctx, taskID, workerID, durationMS)
+}
+
+func (s *ctxAwareStore) MarkPending(ctx context.Context, task *store.TaskRow, workerID, lastError string, runAt time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("mark pending: %w", err)
+	}
+	return s.fakeStore.MarkPending(ctx, task, workerID, lastError, runAt)
+}
+
+func (s *ctxAwareStore) MarkDead(ctx context.Context, taskID, workerID, lastError, reason string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("mark dead: %w", err)
+	}
+	return s.fakeStore.MarkDead(ctx, taskID, workerID, lastError, reason)
+}
+
+var _ store.TaskStore = (*ctxAwareStore)(nil)
+
+func TestExecute_HandlerTimeout_PersistsFailure(t *testing.T) {
+	m := metrics.New()
+	fs := newFakeStore(m)
+	aware := &ctxAwareStore{fakeStore: fs}
+
+	w := buildWorker(aware, m, map[string]tasks.HandlerFunc{
+		"hanging_task": func(ctx context.Context, payload json.RawMessage) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	})
+	w.handlerTimeout = 50 * time.Millisecond
+
+	row := fs.seed(t, "hanging_task", 0, 5)
+	task := claimOne(t, w)
+
+	if err := w.execute(context.Background(), task); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	got := fs.row(row.ID)
+	if got.Status != "PENDING" {
+		t.Fatalf("status = %q, want PENDING (timed-out attempt must be persisted)", got.Status)
+	}
+	if got.LastError == nil || !strings.Contains(*got.LastError, "deadline exceeded") {
+		t.Errorf("last_error = %v, want the timeout recorded", got.LastError)
 	}
 }
