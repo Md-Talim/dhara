@@ -167,6 +167,7 @@ func (f *fakeStore) MarkDead(ctx context.Context, taskID, workerID, lastError, r
 	}
 	row.Status = "DEAD"
 	row.LastError = &lastError
+	f.metrics.TaskAttemptFailuresTotal.Add(1)
 	f.metrics.TasksDeadTotal.Add(1)
 	return nil
 }
@@ -337,6 +338,9 @@ func TestExecute_HandlerFails_ExhaustsRetries_MarksDead(t *testing.T) {
 	}
 	if w.metrics.TasksDeadTotal.Load() != 1 {
 		t.Errorf("TasksDeadTotal = %d, want 1", w.metrics.TasksDeadTotal.Load())
+	}
+	if got := w.metrics.TaskAttemptFailuresTotal.Load(); got != 1 {
+		t.Errorf("TaskAttemptFailuresTotal = %d, want 1 (final failure counts too)", got)
 	}
 }
 
@@ -850,5 +854,47 @@ func TestStart_ClaimErrorsBackOffInsteadOfSpinning(t *testing.T) {
 	}
 	if calls > 25 {
 		t.Errorf("claim attempts = %d in 300ms at a 20ms poll: hot-looping, not backing off", calls)
+	}
+}
+
+type countClaimErrorStore struct {
+	*fakeStore
+	err error
+}
+
+func (s *countClaimErrorStore) Claim(ctx context.Context, workerID string) (*store.TaskRow, error) {
+	return nil, s.err
+}
+
+func TestWorker_CountsClaimErrors(t *testing.T) {
+	m := metrics.New()
+	s := &countClaimErrorStore{
+		fakeStore: newFakeStore(m),
+		err:       errors.New("connection reset by peer"),
+	}
+	w := buildWorker(s, m, nil)
+	w.pollInterval = time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.Start(ctx)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for m.ClaimErrorsTotal.Load() == 0 {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("worker never recorded a claim error")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not stop after cancel")
 	}
 }
