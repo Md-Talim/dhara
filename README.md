@@ -306,25 +306,26 @@ res, err = dhara.MigrateDownWith(ctx, pool, os.DirFS("./migrations"), 2)
 
 The pre-built binaries are configured via environment variables. Library users configure the same knobs with the `dhara.With*` option functions instead.
 
-| Variable             | Default        | Description                                                              |
-| :------------------- | :------------- | :----------------------------------------------------------------------- |
-| `DHARA_DATABASE_URL` | _Required_     | PostgreSQL connection string                                             |
-| `DHARA_MAX_CONNS`    | `10`           | Maximum number of database connections in the pool                       |
-| `DHARA_MIN_CONNS`    | `2`            | Minimum number of database connections in the pool                       |
-| `AUTO_MIGRATE`       | `true`         | Automatically run embedded migrations on binary startup                  |
-| `PORT`               | `8080`         | Port for the HTTP API server                                             |
-| `WORKER_PREFIX`      | `dhara-worker` | Worker identity prefix                                                   |
-| `WORKER_COUNT`       | `5`            | Size of the local concurrent worker pool                                 |
-| `POLL_INTERVAL`      | `1s`           | How often workers poll for pending tasks                                 |
-| `HEARTBEAT_INTERVAL` | `30s`          | How often running tasks update their heartbeat                           |
-| `HANDLER_TIMEOUT`    | `5m`           | Maximum execution time limit for any single task                         |
-| `STUCK_THRESHOLD`    | `5m`           | How long a task can run without a heartbeat before it's considered stuck |
-| `REAPER_INTERVAL`    | `30s`          | How often the reaper scans for stuck tasks                               |
-| `BASE_BACKOFF`       | `1s`           | Initial retry backoff (exponential with full jitter)                     |
-| `MAX_BACKOFF`        | `5m`           | Maximum retry backoff                                                    |
-| `SHUTDOWN_TIMEOUT`   | `30s`          | Maximum time to wait for workers to exit after shutdown                  |
-| `LOG_LEVEL`          | `info`         | Logging verbosity (`debug`, `info`, `warn`, `error`)                     |
-| `LOG_FORMAT`         | `text`         | Structured log output style (`text` or `json`)                           |
+| Variable              | Default        | Description                                                              |
+| :-------------------- | :------------- | :----------------------------------------------------------------------- |
+| `DHARA_DATABASE_URL`  | _Required_     | PostgreSQL connection string                                             |
+| `DHARA_MAX_CONNS`     | `10`           | Maximum number of database connections in the pool                       |
+| `DHARA_MIN_CONNS`     | `2`            | Minimum number of database connections in the pool                       |
+| `AUTO_MIGRATE`        | `true`         | Automatically run embedded migrations on binary startup                  |
+| `PORT`                | `8080`         | Port for the HTTP API server                                             |
+| `WORKER_PREFIX`       | `dhara-worker` | Worker identity prefix                                                   |
+| `WORKER_COUNT`        | `5`            | Size of the local concurrent worker pool                                 |
+| `POLL_INTERVAL`       | `1s`           | How often workers poll for pending tasks                                 |
+| `HEARTBEAT_INTERVAL`  | `30s`          | How often running tasks update their heartbeat                           |
+| `HANDLER_TIMEOUT`     | `5m`           | Maximum execution time limit for any single task                         |
+| `STUCK_THRESHOLD`     | `5m`           | How long a task can run without a heartbeat before it's considered stuck |
+| `REAPER_INTERVAL`     | `30s`          | How often the reaper scans for stuck tasks                               |
+| `BASE_BACKOFF`        | `1s`           | Initial retry backoff (exponential with full jitter)                     |
+| `MAX_BACKOFF`         | `5m`           | Maximum retry backoff                                                    |
+| `WORKER_METRICS_PORT` | `9090`         | Port for the worker's `/metrics` endpoint (`0` disables it)              |
+| `SHUTDOWN_TIMEOUT`    | `30s`          | Maximum time to wait for workers to exit after shutdown                  |
+| `LOG_LEVEL`           | `info`         | Logging verbosity (`debug`, `info`, `warn`, `error`)                     |
+| `LOG_FORMAT`          | `text`         | Structured log output style (`text` or `json`)                           |
 
 Durations accept either Go duration strings (`30s`, `5m`) or plain integers interpreted as seconds.
 
@@ -347,11 +348,23 @@ Every endpoint is a thin wrapper over the same `dhara.Client` methods the librar
 
 ### Prometheus Metrics
 
-- `GET /metrics` or `GET /api/v1/metrics`
-  Exposes system-level metrics in standard Prometheus exposition format. Prominent metrics include:
-- `tasks_enqueued_total`, `tasks_completed_total`, `tasks_dead_total` (lifecycle tracking)
-- `tasks_by_status{status="..."}` (queue size & backlogs)
-- `workers_total`, `workers_inflight` (worker resource utilization)
+Metrics are **process-local**: each process exposes only what it produces. Scrape both endpoints and aggregate in PromQL; metric names are identical across processes.
+
+| Endpoint                                    | Process    | Exposes                                                                                                                                                                                                                                                 |
+| :------------------------------------------ | :--------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /metrics` (also `/api/v1/metrics`)     | API server | Postgres queue gauges, `tasks_enqueued_total`, `tasks_canceled_total`                                                                                                                                                                                   |
+| `GET :9090/metrics` (`WORKER_METRICS_PORT`) | Worker     | `tasks_completed_total`, `tasks_attempt_failures_total`, `tasks_retried_total`, `tasks_dead_total`, `tasks_reaped_total`, `reaper_failures_total`, `worker_claim_errors_total`, `workers_active`, `workers_inflight`, `task_execution_duration_seconds` |
+
+The server endpoint always returns `200`. If Postgres is unreachable, `queue_metrics_up` is `0` and the gauge series are omitted, while process counters keep flowing.
+
+Useful queries:
+
+```promql
+sum(rate(tasks_enqueued_total[5m]))
+sum(rate(tasks_completed_total[5m]))
+sum(tasks_by_status{status="pending"})
+histogram_quantile(0.95, sum by (le) (rate(task_execution_duration_seconds_bucket[5m])))
+```
 
 ## Adding custom task types
 
