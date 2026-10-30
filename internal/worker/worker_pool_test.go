@@ -182,7 +182,7 @@ func TestWorkerPool_StopCancelsInFlightHandlerAndRequeues(t *testing.T) {
 			PollInterval:      5 * time.Millisecond,
 			HeartbeatInterval: time.Hour,
 			ReaperInterval:    time.Hour,
-			HandlerTimeout:    5 * time.Minute, 
+			HandlerTimeout:    5 * time.Minute,
 		},
 		m,
 	)
