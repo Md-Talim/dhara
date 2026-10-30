@@ -58,7 +58,7 @@ done
 echo "Running tests with DHARA_TEST_DATABASE_URL=${DHARA_TEST_DATABASE_URL}"
 # -timeout guards against a wedged test hanging CI forever; -shuffle makes
 # ordering bugs (tests depending on rows left behind) reproducible.
-go test ./... -v -race -shuffle=on -timeout=600s
+go test ./... -p 1 -v -race -shuffle=on -timeout=600s
 
 echo "Stopping test database container."
 # shellcheck disable=SC2086
