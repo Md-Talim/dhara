@@ -2,8 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -69,15 +74,64 @@ func run() int {
 	worker.RegisterHandler("slow_task", tasks.SlowTask)
 	worker.RegisterHandler("realistic_work", tasks.RealisticWork)
 
+	metricsServer, err := startMetricsServer(workerCfg.MetricsPort, worker, logger)
+	if err != nil {
+		logger.Error("failed to start metrics server", "err", err)
+		return 1
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	logger.Info("worker starting")
-	if err := worker.Start(ctx); err != nil {
-		logger.Error("worker stopped with error", "err", err)
+	startErr := worker.Start(ctx)
+
+	if metricsServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownCfg.ShutdownTimeout)
+		defer cancel()
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			logger.Error("metrics server shutdown failed", "err", err)
+		}
+	}
+
+	if startErr != nil {
+		logger.Error("worker stopped with error", "err", startErr)
 		return 1
 	}
 
 	logger.Info("worker stopped")
 	return 0
+}
+
+func startMetricsServer(port int, worker *dhara.Worker, logger *slog.Logger) (*http.Server, error) {
+	if port == 0 {
+		logger.Info("worker metrics server disabled")
+		return nil, nil
+	}
+
+	addr := ":" + strconv.Itoa(port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", worker.MetricsHandler())
+	mux.HandleFunc("GET /livez", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		logger.Info("worker metrics server starting", "addr", addr)
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("worker metrics server failed", "err", err)
+		}
+	}()
+
+	return srv, nil
 }

@@ -147,3 +147,33 @@ func TestGetEnvDuration_PlainIntegerMeansSeconds(t *testing.T) {
 		t.Errorf("getEnvDuration(invalid) = %v, want default 7s", got)
 	}
 }
+
+func TestWorkerConfig_ValidateMetricsPort(t *testing.T) {
+	cfg := func(port int) *WorkerConfig {
+		return &WorkerConfig{
+			WorkerPrefix:      "w",
+			WorkerCount:       1,
+			PollInterval:      time.Second,
+			HeartbeatInterval: 30 * time.Second,
+			HandlerTimeout:    time.Minute,
+			StuckThreshold:    5 * time.Minute,
+			ReaperInterval:    30 * time.Second,
+			BaseBackoff:       time.Second,
+			MaxBackoff:        time.Minute,
+			MetricsPort:       port,
+		}
+	}
+
+	if err := cfg(9090).Validate(); err != nil {
+		t.Errorf("valid port rejected: %v", err)
+	}
+	if err := cfg(0).Validate(); err != nil {
+		t.Errorf("0 (disabled) rejected: %v", err)
+	}
+	if err := cfg(-1).Validate(); err == nil {
+		t.Error("-1 accepted")
+	}
+	if err := cfg(70000).Validate(); err == nil {
+		t.Error("70000 accepted")
+	}
+}

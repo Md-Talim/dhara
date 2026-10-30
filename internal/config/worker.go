@@ -16,6 +16,7 @@ type WorkerConfig struct {
 	ReaperInterval    time.Duration
 	BaseBackoff       time.Duration
 	MaxBackoff        time.Duration
+	MetricsPort       int
 }
 
 func NewWorkerConfig() *WorkerConfig {
@@ -29,6 +30,7 @@ func NewWorkerConfig() *WorkerConfig {
 		ReaperInterval:    getEnvDuration("REAPER_INTERVAL", 30*time.Second),
 		BaseBackoff:       getEnvDuration("BASE_BACKOFF", time.Second),
 		MaxBackoff:        getEnvDuration("MAX_BACKOFF", 5*time.Minute),
+		MetricsPort:       getEnvInt("WORKER_METRICS_PORT", 9090),
 	}
 }
 
@@ -62,6 +64,9 @@ func (c *WorkerConfig) Validate() error {
 	}
 	if c.BaseBackoff > c.MaxBackoff {
 		return fmt.Errorf("BASE_BACKOFF (%s) must be <= MAX_BACKOFF (%s)", c.BaseBackoff, c.MaxBackoff)
+	}
+	if c.MetricsPort < 0 || c.MetricsPort > 65535 {
+		return fmt.Errorf("WORKER_METRICS_PORT must be between 0 and 65535")
 	}
 	return nil
 }

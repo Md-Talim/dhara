@@ -75,9 +75,12 @@ services:
             dockerfile: Dockerfile
             args:
                 BINARY: worker
+        ports:
+            - "9090:9090"
         environment:
             DHARA_DATABASE_URL: postgres://dhara:dhara@db:5432/dhara?sslmode=disable
             AUTO_MIGRATE: "false"
+            WORKER_METRICS_PORT: "9090"
         depends_on:
             migrate:
                 condition: service_completed_successfully
