@@ -17,8 +17,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/dhara .
 
 # ---- Stage 2: Runtime ----
 FROM alpine:3.21
-RUN adduser -D -u 10001 dhara
+RUN apk add --no-cache ca-certificates && adduser -D -u 10001 dhara
 USER dhara
 COPY --from=builder /out/dhara /usr/local/bin/dhara
-EXPOSE 8080
+EXPOSE 8080 9090
 ENTRYPOINT ["/usr/local/bin/dhara"]
