@@ -1,5 +1,10 @@
 # dhara
 
+[![CI](https://github.com/md-talim/dhara/actions/workflows/ci.yml/badge.svg)](https://github.com/md-talim/dhara/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/md-talim/dhara.svg)](https://pkg.go.dev/github.com/md-talim/dhara)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/md-talim/dhara)](https://github.com/md-talim/dhara/blob/main/go.mod)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
 Dhara is a distributed task queue library and service for Go, backed by PostgreSQL. It covers the full task lifecycle: enqueue, claim, retry, dead-letter. No external dependencies like Redis or RabbitMQ.
 
 Use it two ways:
