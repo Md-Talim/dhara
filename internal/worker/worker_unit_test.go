@@ -803,3 +803,52 @@ func TestExecute_HandlerTimeout_PersistsFailure(t *testing.T) {
 		t.Errorf("last_error = %v, want the timeout recorded", got.LastError)
 	}
 }
+
+type claimErrorStore struct {
+	*fakeStore
+	mu    sync.Mutex
+	calls int
+}
+
+func (s *claimErrorStore) Claim(ctx context.Context, workerID string) (*store.TaskRow, error) {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	return nil, errors.New("db unreachable")
+}
+
+func (s *claimErrorStore) claimCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+var _ store.TaskStore = (*claimErrorStore)(nil)
+
+// the worker waits a poll interval between attempts instead of hot-looping
+func TestStart_ClaimErrorsBackOffInsteadOfSpinning(t *testing.T) {
+	m := metrics.New()
+	es := &claimErrorStore{fakeStore: newFakeStore(m)}
+
+	w := buildWorker(es, m, nil)
+	w.pollInterval = 20 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.Start(ctx)
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	<-done
+
+	calls := es.claimCalls()
+	if calls < 3 {
+		t.Errorf("claim attempts = %d in 300ms, want >= 3 (must keep retrying)", calls)
+	}
+	if calls > 25 {
+		t.Errorf("claim attempts = %d in 300ms at a 20ms poll: hot-looping, not backing off", calls)
+	}
+}
