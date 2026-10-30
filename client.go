@@ -142,21 +142,29 @@ type MetricsSnapshot struct {
 	TasksDeadTotal           int64
 	TasksCanceledTotal       int64
 	TasksReapedTotal         int64
-	WorkersTotal             int64
+	ReaperFailuresTotal      int64
+	ClaimErrorsTotal         int64
+	WorkersActive            int64
 	WorkersInflight          int64
 }
 
 func (c *Client) Metrics() MetricsSnapshot {
+	return snapshotMetrics(c.metrics)
+}
+
+func snapshotMetrics(m *metrics.Metrics) MetricsSnapshot {
 	return MetricsSnapshot{
-		TasksEnqueuedTotal:       c.metrics.TasksEnqueuedTotal.Load(),
-		TasksCompletedTotal:      c.metrics.TasksCompletedTotal.Load(),
-		TaskAttemptFailuresTotal: c.metrics.TaskAttemptFailuresTotal.Load(),
-		TasksRetriedTotal:        c.metrics.TasksRetriedTotal.Load(),
-		TasksDeadTotal:           c.metrics.TasksDeadTotal.Load(),
-		TasksCanceledTotal:       c.metrics.TasksCanceledTotal.Load(),
-		TasksReapedTotal:         c.metrics.TasksReapedTotal.Load(),
-		WorkersTotal:             c.metrics.WorkersTotal.Load(),
-		WorkersInflight:          c.metrics.WorkersInflight.Load(),
+		TasksEnqueuedTotal:       m.TasksEnqueuedTotal.Load(),
+		TasksCompletedTotal:      m.TasksCompletedTotal.Load(),
+		TaskAttemptFailuresTotal: m.TaskAttemptFailuresTotal.Load(),
+		TasksRetriedTotal:        m.TasksRetriedTotal.Load(),
+		TasksDeadTotal:           m.TasksDeadTotal.Load(),
+		TasksCanceledTotal:       m.TasksCanceledTotal.Load(),
+		TasksReapedTotal:         m.TasksReapedTotal.Load(),
+		ReaperFailuresTotal:      m.ReaperFailuresTotal.Load(),
+		ClaimErrorsTotal:         m.ClaimErrorsTotal.Load(),
+		WorkersActive:            m.WorkersActive.Load(),
+		WorkersInflight:          m.WorkersInflight.Load(),
 	}
 }
 

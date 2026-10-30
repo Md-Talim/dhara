@@ -21,7 +21,7 @@ type application struct {
 	startTime      time.Time
 	healthHandler  *healthHandler
 	taskHandler    *taskHandler
-	metricsHandler *metricsHandler
+	metricsHandler http.Handler
 }
 
 type appDeps struct {
@@ -60,7 +60,7 @@ func newApplication(deps appDeps) (*application, error) {
 		startTime:      deps.startTime,
 		healthHandler:  newHealthHandler(deps.startTime, pool),
 		taskHandler:    newTaskHandler(client, deps.logger),
-		metricsHandler: newMetricsHandler(client),
+		metricsHandler: client.MetricsHandler(),
 	}, nil
 }
 

@@ -86,6 +86,7 @@ func (p *WorkerPool) Start(ctx context.Context) {
 			p.settings.ReaperInterval,
 			p.settings.StaleThreshold,
 			reaperID,
+			p.metrics,
 		).start(p.ctx)
 	})
 }

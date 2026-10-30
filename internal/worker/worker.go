@@ -37,8 +37,8 @@ type Worker struct {
 }
 
 func (w *Worker) Start(ctx context.Context) {
-	w.metrics.WorkersTotal.Add(1)
-	defer w.metrics.WorkersTotal.Add(-1)
+	w.metrics.WorkersActive.Add(1)
+	defer w.metrics.WorkersActive.Add(-1)
 
 	ticker := time.NewTicker(w.pollInterval)
 	defer ticker.Stop()
@@ -46,21 +46,39 @@ func (w *Worker) Start(ctx context.Context) {
 	w.logger.Info("worker started", "worker_id", w.workerID)
 	defer w.logger.Info("worker stopping", "worker_id", w.workerID)
 
+	claimFailing := false
+
 	for {
 		task, err := w.claim(ctx)
-		if err != nil {
-			// No work available or context cancelled: wait before trying again.
-			select {
-			case <-ticker.C:
-				continue
-			case <-ctx.Done():
-				return
+		if err == nil {
+			claimFailing = false
+			// Got a task: process it immediately, then claim again.
+			if execErr := w.execute(ctx, task); execErr != nil {
+				w.logger.Error("execute task failed", "err", execErr)
 			}
+			continue
 		}
 
-		// Got a task: process it immediately, then loop back to claim again.
-		if err := w.execute(ctx, task); err != nil {
-			w.logger.Error("execute task failed", "err", err)
+		if ctx.Err() != nil {
+			return
+		}
+
+		if !errors.Is(err, dharatype.ErrTaskNotAvailable) {
+			// A real store failure, not an empty queue. Count every failure
+			// but log once per outage instead of once per poll tick.
+			w.metrics.ClaimErrorsTotal.Add(1)
+			if !claimFailing {
+				w.logger.Warn("claim failed, will retry", "err", err)
+				claimFailing = true
+			}
+		} else {
+			claimFailing = false
+		}
+
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
 		}
 	}
 }
@@ -106,6 +124,7 @@ func (w *Worker) execute(ctx context.Context, task *store.TaskRow) error {
 
 	taskStartTime := time.Now()
 	handlerErr := w.runTaskHandler(taskCtx, task, handler)
+	w.metrics.TaskExecutionDuration.Observe(time.Since(taskStartTime).Seconds())
 
 	persistCtx, cancelPersist := w.persistContext(task)
 	defer cancelPersist()

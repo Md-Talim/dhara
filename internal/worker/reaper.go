@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/md-talim/dhara/internal/metrics"
 	"github.com/md-talim/dhara/internal/store"
 )
 
@@ -14,6 +15,7 @@ type reaper struct {
 	interval       time.Duration
 	staleThreshold time.Duration
 	reaperID       string
+	metrics        *metrics.Metrics
 }
 
 func newReaper(
@@ -22,6 +24,7 @@ func newReaper(
 	interval time.Duration,
 	staleThreshold time.Duration,
 	reaperID string,
+	metrics *metrics.Metrics,
 ) *reaper {
 	if logger == nil {
 		logger = slog.Default()
@@ -42,6 +45,7 @@ func newReaper(
 		interval:       interval,
 		staleThreshold: staleThreshold,
 		reaperID:       reaperID,
+		metrics:        metrics,
 	}
 }
 
@@ -59,6 +63,7 @@ func (r *reaper) start(ctx context.Context) {
 		case <-ticker.C:
 			n, err := r.store.RequeueStaleRunning(ctx, r.staleThreshold, r.reaperID)
 			if err != nil {
+				r.metrics.ReaperFailuresTotal.Add(1)
 				r.logger.Error("reaper run failed", "err", err)
 				continue
 			}

@@ -492,6 +492,7 @@ func (ts *PostgresTaskStore) MarkDead(ctx context.Context, taskID, workerID, las
 		return fmt.Errorf("commit dead: %w", err)
 	}
 
+	ts.metrics.TaskAttemptFailuresTotal.Add(1)
 	ts.metrics.TasksDeadTotal.Add(1)
 	return nil
 }

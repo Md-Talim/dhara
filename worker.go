@@ -164,3 +164,8 @@ func (w *Worker) Start(ctx context.Context) error {
 func (w *Worker) Stop() {
 	w.stopOnce.Do(func() { close(w.stopCh) })
 }
+
+// Metrics returns a point-in-time read of this worker's process-local counters.
+func (w *Worker) Metrics() MetricsSnapshot {
+	return snapshotMetrics(w.metrics)
+}
