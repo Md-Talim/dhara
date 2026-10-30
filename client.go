@@ -105,6 +105,9 @@ func (c *Client) CancelTask(ctx context.Context, id string) (*Task, error) {
 	if err != nil {
 		return nil, err
 	}
+	if task == nil {
+		return nil, dharatype.ErrTaskNotFound
+	}
 	return newTask(task), nil
 }
 

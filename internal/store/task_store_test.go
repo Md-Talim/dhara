@@ -320,6 +320,16 @@ func TestGetTaskById_NotFound(t *testing.T) {
 	}
 }
 
+func TestCancel_NonExistentTaskReturnsNotFound(t *testing.T) {
+	ctx := context.Background()
+	t.Cleanup(func() { truncateTables(ctx, testDB) })
+
+	_, err := testStore.Cancel(ctx, uuid.New().String())
+	if !errors.Is(err, dharatype.ErrTaskNotFound) {
+		t.Fatalf("Cancel() error = %v, want ErrTaskNotFound", err)
+	}
+}
+
 func setupTestDB(ctx context.Context) (*pgxpool.Pool, error) {
 	pool, err := db.Open(ctx, testutil.TestDBURL(), 10, 2)
 	if err != nil {

@@ -139,6 +139,8 @@ func (ts *PostgresTaskStore) insertTask(ctx context.Context, exec DBTX, task *Ta
 	return true, nil
 }
 
+// GetById returns the task, or (nil, nil) if no row matches. Callers must
+// check for a nil result before using it.
 func (ts *PostgresTaskStore) GetById(ctx context.Context, id string) (*TaskRow, error) {
 	query := `
 		SELECT
@@ -152,7 +154,7 @@ func (ts *PostgresTaskStore) GetById(ctx context.Context, id string) (*TaskRow, 
 		&task.ID, &task.Type, &task.Payload, &task.IdempotencyKey, &task.Status, &task.Priority, &task.Attempts,
 		&task.MaxRetries, &task.RunAt, &task.StartedAt, &task.CompletedAt, &task.LastError, &task.CreatedAt, &task.UpdatedAt,
 	)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -262,13 +264,14 @@ func (ts *PostgresTaskStore) Cancel(ctx context.Context, id string) (*TaskRow, e
 	}
 
 	if errors.Is(err, pgx.ErrNoRows) {
-		// not PENDING - no log needed, return current state
-		current, err := ts.GetById(ctx, id)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, dharatype.ErrTaskNotFound // task not found
-			}
-			return nil, err
+		// Not PENDING. Return the current state so the caller can distinguish
+		// RUNNING (409) from terminal (idempotent 200).
+		current, lookupErr := ts.GetById(ctx, id)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if current == nil {
+			return nil, dharatype.ErrTaskNotFound
 		}
 		return current, nil
 	}
