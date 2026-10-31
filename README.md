@@ -55,7 +55,7 @@ stateDiagram-v2
 
 5. **At-least-once delivery**
 
-    Tasks are guaranteed to run at least once, not exactly once. Failed attempts retry with backoff, stale heartbeats are reaped, and handlers still running during shutdown are cancelled and their tasks requeued. A handler can therefore see the same task more than once, so it must be idempotent, for example by deduplicating on the task ID or an idempotency key. Enqueue-side idempotency prevents duplicate submission, not duplicate execution. Handlers should honor `ctx.Done()`; one that ignores cancellation delays shutdown until `SHUTDOWN_TIMEOUT`.
+    Tasks are guaranteed to run at least once, not exactly once. Failed attempts retry with backoff, stale heartbeats are reaped, and handlers still running during shutdown are cancelled: the interrupted attempt is recorded as a failure and retried, or dead-lettered if no attempts remain. A handler can therefore see the same task more than once, so it must be idempotent, for example by deduplicating on the task ID or an idempotency key. Enqueue-side idempotency prevents duplicate submission, not duplicate execution. Handlers should honor `ctx.Done()`; one that ignores cancellation delays shutdown until `SHUTDOWN_TIMEOUT`.
 
 ## Benchmarks
 
@@ -184,7 +184,7 @@ if err := tx.Commit(ctx); err != nil {
 }
 ```
 
-**3. Run a worker to execute tasks.** A `Worker` owns the goroutine pool, heartbeats, and the reaper. `Start` blocks until the context is cancelled, then cancels in-flight handlers and returns; interrupted tasks are requeued for redelivery.
+**3. Run a worker to execute tasks.** A `Worker` owns the goroutine pool, heartbeats, and the reaper. `Start` blocks until the context is cancelled, then cancels in-flight handlers and returns; interrupted attempts are recorded as failures and retried, or dead-lettered if their attempt budget is exhausted.
 
 ```go
 worker := dhara.NewWorker(pool,
@@ -259,7 +259,7 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 curl "http://localhost:8080/api/v1/tasks?limit=20"
 ```
 
-The worker binary registers a few demo handlers: `echo`, `send_email`, `always_fail`, `slow_task`, so you can see retries, dead-lettering, and timeouts in action. To register your own task types, see [Adding custom task types](#adding-custom-task-types).
+The worker binary registers a few demo handlers: `echo`, `send_email`, `always_fail`, `slow_task`, `realistic_work`, so you can see retries, dead-lettering, and timeouts in action. To register your own task types, see [Adding custom task types](#adding-custom-task-types).
 
 ## Migrations
 
@@ -336,7 +336,7 @@ Durations accept either Go duration strings (`30s`, `5m`) or plain integers inte
 - `POST /api/v1/tasks`: Enqueue a new task.
 - `GET /api/v1/tasks`: Query and list tasks with metadata.
 - `GET /api/v1/tasks/{id}`: Fetch detailed status of a specific task.
-- `DELETE /api/v1/tasks/{id}`: Cancel a `PENDING` or `RUNNING` task.
+- `DELETE /api/v1/tasks/{id}`: Cancel a `PENDING` task. Returns `409 Conflict` if the task is currently `RUNNING`; terminal tasks are returned unchanged with `200`.
 - `POST /api/v1/tasks/{id}/retry`: Manually trigger a retry for a `DEAD` task.
 
 Every endpoint is a thin wrapper over the same `dhara.Client` methods the library exposes (`Insert`, `ListTasks`, `GetTask`, `CancelTask`, `RetryTask`), so the API and library share one code path by construction.
@@ -357,12 +357,21 @@ Metrics are **process-local**: each process exposes only what it produces. Scrap
 
 The server endpoint always returns `200`. If Postgres is unreachable, `queue_metrics_up` is `0` and the gauge series are omitted, while process counters keep flowing.
 
+Library users can mount the same exposition directly:
+
+```go
+mux.Handle("GET /metrics", client.MetricsHandler())        // queue gauges + enqueue/cancel
+mux.Handle("GET /worker-metrics", worker.MetricsHandler()) // execution counters + latency
+```
+
+`client.MetricsHandler` includes the Postgres gauges; `worker.MetricsHandler` never touches the database. If both run in one process, mount both.
+
 Useful queries:
 
 ```promql
 sum(rate(tasks_enqueued_total[5m]))
 sum(rate(tasks_completed_total[5m]))
-sum(tasks_by_status{status="pending"})
+sum(tasks_by_status{status="PENDING"})
 histogram_quantile(0.95, sum by (le) (rate(task_execution_duration_seconds_bucket[5m])))
 ```
 
