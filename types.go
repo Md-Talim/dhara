@@ -10,8 +10,12 @@ import (
 	"github.com/md-talim/dhara/internal/store"
 )
 
+// TaskListFilter selects and paginates tasks for Client.ListTasks. The zero
+// value lists all tasks with the default limit.
 type TaskListFilter = dharatype.TaskListFilter
 
+// HandlerFunc is the signature of a task handler. Returning a non-nil error
+// schedules a retry, or dead-letters the task once its attempts are exhausted.
 type HandlerFunc = dharatype.HandlerFunc
 
 // Task is the public representation of a task. It intentionally omits the
@@ -37,11 +41,16 @@ type Task struct {
 type TaskStatus string
 
 const (
-	TaskStatusPending   TaskStatus = "PENDING"
-	TaskStatusRunning   TaskStatus = "RUNNING"
+	// TaskStatusPending means the task is waiting to be claimed.
+	TaskStatusPending TaskStatus = "PENDING"
+	// TaskStatusRunning means a worker has claimed and is executing the task.
+	TaskStatusRunning TaskStatus = "RUNNING"
+	// TaskStatusCompleted means the handler returned nil.
 	TaskStatusCompleted TaskStatus = "COMPLETED"
-	TaskStatusCanceled  TaskStatus = "CANCELED"
-	TaskStatusDead      TaskStatus = "DEAD"
+	// TaskStatusCanceled means the task was canceled before completing.
+	TaskStatusCanceled TaskStatus = "CANCELED"
+	// TaskStatusDead means every attempt failed, or no handler was registered.
+	TaskStatusDead TaskStatus = "DEAD"
 )
 
 // newTask converts an internal store row into the public representation.
@@ -172,20 +181,30 @@ func (p *InsertParams) toStoreTask() *store.TaskRow {
 	}
 }
 
+// EnqueueOption customizes an Enqueue or EnqueueTx call.
 type EnqueueOption func(*InsertParams)
 
+// WithIdempotencyKey makes submission replay-safe: the same (type, key) with
+// the same payload returns the existing task. A different payload returns
+// ErrTaskConflict.
 func WithIdempotencyKey(key string) EnqueueOption {
 	return func(p *InsertParams) { p.IdempotencyKey = &key }
 }
 
+// WithPriority sets claim order; higher values are claimed first.
+// Valid range: 0..100.
 func WithPriority(priority int) EnqueueOption {
 	return func(p *InsertParams) { p.Priority = &priority }
 }
 
+// WithMaxRetries sets the maximum number of attempts, including the first.
+// Zero means one attempt and no retries. Valid range: 0..20.
 func WithMaxRetries(maxRetries int) EnqueueOption {
 	return func(p *InsertParams) { p.MaxRetries = &maxRetries }
 }
 
+// WithRunAt delays the task until runAt. It may not be more than 5 minutes in
+// the past or more than 30 days in the future.
 func WithRunAt(runAt time.Time) EnqueueOption {
 	return func(p *InsertParams) { p.RunAt = &runAt }
 }

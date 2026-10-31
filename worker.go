@@ -15,6 +15,7 @@ import (
 	"github.com/md-talim/dhara/internal/worker"
 )
 
+// WorkerOption configures a Worker.
 type WorkerOption func(*workerConfig)
 
 type workerConfig struct {
@@ -47,50 +48,68 @@ func defaultWorkerConfig() workerConfig {
 	}
 }
 
+// WithWorkerPrefix sets the identity prefix for worker IDs and reaper logs.
+// Default "dhara-worker".
 func WithWorkerPrefix(prefix string) WorkerOption {
 	return func(c *workerConfig) { c.workerPrefix = prefix }
 }
 
+// WithMaxWorkers sets the number of concurrent handler goroutines. Default 5.
 func WithMaxWorkers(n int) WorkerOption {
 	return func(c *workerConfig) { c.maxWorkers = n }
 }
 
+// WithPollInterval sets how long an idle worker waits before polling again.
+// Default 1s.
 func WithPollInterval(d time.Duration) WorkerOption {
 	return func(c *workerConfig) { c.pollInterval = d }
 }
 
+// WithHeartbeatInterval sets how often running tasks refresh their lock.
+// Keep it well below WithStuckThreshold. Default 30s.
 func WithHeartbeatInterval(d time.Duration) WorkerOption {
 	return func(c *workerConfig) { c.heartbeatInterval = d }
 }
 
+// WithHandlerTimeout bounds a single handler invocation. Default 5m.
 func WithHandlerTimeout(d time.Duration) WorkerOption {
 	return func(c *workerConfig) { c.handlerTimeout = d }
 }
 
+// WithBaseBackoff sets the initial retry delay. Default 1s.
 func WithBaseBackoff(d time.Duration) WorkerOption {
 	return func(c *workerConfig) { c.baseBackoff = d }
 }
 
+// WithMaxBackoff caps the retry delay. Default 5m.
 func WithMaxBackoff(d time.Duration) WorkerOption {
 	return func(c *workerConfig) { c.maxBackoff = d }
 }
 
+// WithReaperInterval sets how often stale RUNNING tasks are scanned.
+// Default 30s.
 func WithReaperInterval(d time.Duration) WorkerOption {
 	return func(c *workerConfig) { c.reaperInterval = d }
 }
 
+// WithStuckThreshold sets how long a task may go without a heartbeat before
+// the reaper requeues it. Default 5m.
 func WithStuckThreshold(d time.Duration) WorkerOption {
 	return func(c *workerConfig) { c.stuckThreshold = d }
 }
 
+// WithShutdownTimeout bounds how long Start waits for in-flight handlers
+// after its context is cancelled. Default 30s.
 func WithShutdownTimeout(d time.Duration) WorkerOption {
 	return func(c *workerConfig) { c.shutdownTimeout = d }
 }
 
+// WithLogger sets the structured logger. Default slog.Default().
 func WithLogger(l *slog.Logger) WorkerOption {
 	return func(c *workerConfig) { c.logger = l }
 }
 
+// Worker claims and executes tasks. Register handlers before calling Start.
 type Worker struct {
 	pool     *pgxpool.Pool
 	registry *tasks.MapRegistry
@@ -104,6 +123,8 @@ type Worker struct {
 	stopOnce sync.Once
 }
 
+// NewWorker returns a Worker that claims tasks from pool. It starts no
+// goroutines until Start is called.
 func NewWorker(pool *pgxpool.Pool, opts ...WorkerOption) *Worker {
 	cfg := defaultWorkerConfig()
 	for _, o := range opts {
@@ -123,6 +144,8 @@ func NewWorker(pool *pgxpool.Pool, opts ...WorkerOption) *Worker {
 	}
 }
 
+// RegisterHandler associates taskType with handler. It panics if called after
+// Start.
 func (w *Worker) RegisterHandler(taskType string, handler HandlerFunc) {
 	if w.started.Load() {
 		panic("dhara: RegisterHandler called after Start")
@@ -130,6 +153,10 @@ func (w *Worker) RegisterHandler(taskType string, handler HandlerFunc) {
 	w.registry.Add(taskType, handler)
 }
 
+// Start runs the worker pool and blocks until ctx is cancelled or Stop is
+// called. In-flight handlers are cancelled, their outcomes persisted, and the
+// call returns after the pool drains or WithShutdownTimeout elapses. It
+// returns an error if the worker was already started or the drain timed out.
 func (w *Worker) Start(ctx context.Context) error {
 	if w.started.Swap(true) {
 		return errors.New("dhara: worker already started")
@@ -161,6 +188,7 @@ func (w *Worker) Start(ctx context.Context) error {
 	return wp.Wait(waitCtx)
 }
 
+// Stop requests a graceful shutdown. It is safe to call more than once.
 func (w *Worker) Stop() {
 	w.stopOnce.Do(func() { close(w.stopCh) })
 }

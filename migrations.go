@@ -19,8 +19,8 @@ var MigrationFS fs.FS = mustSub(migrationsRoot, "migrations")
 
 // MigrationResult reports what a migration run changed
 type MigrationResult struct {
-	Versions []string
-	Skipped  int
+	Versions []string // versions applied or rolled back in this run
+	Skipped  int      // versions already at the target state
 }
 
 // Migrate applies all pending migrations using embedded migration files

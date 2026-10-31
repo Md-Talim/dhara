@@ -13,11 +13,15 @@ import (
 	"github.com/md-talim/dhara/internal/store"
 )
 
+// Client enqueues and inspects tasks. It is safe for concurrent use, owns no
+// goroutines, and keeps all state in Postgres.
 type Client struct {
 	store   *store.PostgresTaskStore
 	metrics *metrics.Metrics
 }
 
+// NewClient returns a Client backed by pool. The caller owns the pool; the
+// library never closes it.
 func NewClient(pool *pgxpool.Pool) *Client {
 	m := metrics.New()
 	return &Client{
@@ -26,7 +30,8 @@ func NewClient(pool *pgxpool.Pool) *Client {
 	}
 }
 
-// Insert enqueues a task, applying the shared defaults with Validation
+// Insert normalizes and validates params, then enqueues the task in its own
+// transaction. Use InsertTx to join an existing transaction.
 func (c *Client) Insert(ctx context.Context, params InsertParams) (*EnqueueResult, error) {
 	now := time.Now()
 	params.Normalize(now)
@@ -43,6 +48,8 @@ func (c *Client) Insert(ctx context.Context, params InsertParams) (*EnqueueResul
 	return &EnqueueResult{Task: newTask(task), Duplicate: !created}, nil
 }
 
+// InsertTx enqueues the task inside tx. The caller owns the transaction: the
+// task commits or rolls back with it.
 func (c *Client) InsertTx(ctx context.Context, tx pgx.Tx, params InsertParams) (*EnqueueResult, error) {
 	now := time.Now()
 	params.Normalize(now)
@@ -59,6 +66,7 @@ func (c *Client) InsertTx(ctx context.Context, tx pgx.Tx, params InsertParams) (
 	return &EnqueueResult{Task: newTask(task), Duplicate: !created}, nil
 }
 
+// Enqueue marshals payload and inserts a task of the given type, applying opts.
 func (c *Client) Enqueue(ctx context.Context, taskType string, payload any, opts ...EnqueueOption) (*EnqueueResult, error) {
 	params, err := buildInsertParams(taskType, payload, opts...)
 	if err != nil {
@@ -67,6 +75,7 @@ func (c *Client) Enqueue(ctx context.Context, taskType string, payload any, opts
 	return c.Insert(ctx, params)
 }
 
+// EnqueueTx marshals payload and inserts the task inside tx, applying opts.
 func (c *Client) EnqueueTx(ctx context.Context, tx pgx.Tx, taskType string, payload any, opts ...EnqueueOption) (*EnqueueResult, error) {
 	params, err := buildInsertParams(taskType, payload, opts...)
 	if err != nil {
@@ -75,6 +84,7 @@ func (c *Client) EnqueueTx(ctx context.Context, tx pgx.Tx, taskType string, payl
 	return c.InsertTx(ctx, tx, params)
 }
 
+// GetTask returns the task with the given ID, or ErrTaskNotFound.
 func (c *Client) GetTask(ctx context.Context, id string) (*Task, error) {
 	task, err := c.store.GetById(ctx, id)
 	if err != nil {
@@ -86,7 +96,7 @@ func (c *Client) GetTask(ctx context.Context, id string) (*Task, error) {
 	return newTask(task), nil
 }
 
-// ListTasks return tasks matching the fitler, plus the total count.
+// ListTasks returns the tasks matching filter and the total count before pagination.
 func (c *Client) ListTasks(ctx context.Context, filter TaskListFilter) ([]Task, int, error) {
 	tasks, total, err := c.store.List(ctx, filter)
 	if err != nil {
@@ -99,7 +109,9 @@ func (c *Client) ListTasks(ctx context.Context, filter TaskListFilter) ([]Task, 
 	return out, total, nil
 }
 
-// CancelTask cancels a PENDING task. Returns ErrTaskNotFound if it doesn't exists
+// CancelTask cancels a PENDING task. A RUNNING task is returned unchanged so
+// the caller can reject it; terminal tasks are returned as-is. Returns
+// ErrTaskNotFound if the ID does not exist.
 func (c *Client) CancelTask(ctx context.Context, id string) (*Task, error) {
 	task, err := c.store.Cancel(ctx, id)
 	if err != nil {
@@ -120,6 +132,7 @@ func (c *Client) RetryTask(ctx context.Context, id string) (*Task, error) {
 	return newTask(task), nil
 }
 
+// QueueMetrics reads task counts by state from Postgres in a single query.
 func (c *Client) QueueMetrics(ctx context.Context) (*QueueMetrics, error) {
 	qm, err := c.store.GetQueueDBMetrics(ctx)
 	if err != nil {
@@ -136,7 +149,9 @@ func (c *Client) QueueMetrics(ctx context.Context) (*QueueMetrics, error) {
 	}, nil
 }
 
-// MetricsSnapshot is a point-in-time read of the in-process counters.
+// MetricsSnapshot is a point-in-time read of one process's counters. The
+// server and worker track disjoint sets: enqueue/cancel on the server,
+// execution and reaper counters on the worker. Values reset on restart.
 type MetricsSnapshot struct {
 	TasksEnqueuedTotal       int64
 	TasksCompletedTotal      int64
@@ -151,6 +166,8 @@ type MetricsSnapshot struct {
 	WorkersInflight          int64
 }
 
+// Metrics returns a point-in-time read of this client's process-local
+// counters. Only the enqueue and cancel counters are non-zero on a Client.
 func (c *Client) Metrics() MetricsSnapshot {
 	return snapshotMetrics(c.metrics)
 }
