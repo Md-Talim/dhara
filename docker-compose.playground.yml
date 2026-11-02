@@ -1,0 +1,80 @@
+name: dhara-playground
+
+services:
+    playground_db:
+        container_name: dhara_playground_db
+        image: postgres:16-alpine
+        restart: unless-stopped
+        environment:
+            POSTGRES_DB: dhara_playground
+            POSTGRES_USER: dhara
+            POSTGRES_PASSWORD: dhara
+        ports:
+            # Bind to localhost only; the playground container reaches the DB
+            # over the compose network, and this port is for local inspection.
+            - "127.0.0.1:5434:5432"
+        volumes:
+            - playground_pgdata:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U dhara -d dhara_playground"]
+            interval: 5s
+            timeout: 3s
+            retries: 10
+
+    playground:
+        container_name: dhara_playground
+        build:
+            context: .
+            dockerfile: Dockerfile
+            args:
+                BINARY: playground
+        ports:
+            - "8080:8080"
+        environment:
+            DHARA_DATABASE_URL: postgres://dhara:dhara@playground_db:5432/dhara_playground?sslmode=disable
+            PORT: "8080"
+            AUTO_MIGRATE: "true"
+            SHUTDOWN_TIMEOUT: "15s"
+            LOG_LEVEL: info
+            LOG_FORMAT: json
+
+            PLAYGROUND_DB_SCHEMA: dhara_playground
+            PLAYGROUND_CRASH_SCHEMA: dhara_playground_crash
+            PLAYGROUND_ENABLE_CRASH_DEMO: "true"
+            PLAYGROUND_TRUST_PROXY: "false"
+
+            WORKER_PREFIX: playground-worker
+            WORKER_COUNT: "4"
+            POLL_INTERVAL: 250ms
+            HEARTBEAT_INTERVAL: 2s
+            HANDLER_TIMEOUT: 12s
+            STUCK_THRESHOLD: 10s
+            REAPER_INTERVAL: 2s
+            BASE_BACKOFF: 1s
+            MAX_BACKOFF: 30s
+
+            PLAYGROUND_MAX_BATCH: "50"
+            PLAYGROUND_MAX_BODY_BYTES: "16384"
+            PLAYGROUND_MAX_PAYLOAD_BYTES: "4096"
+            PLAYGROUND_MAX_PENDING: "500"
+            PLAYGROUND_RATE_LIMIT_PER_MIN: "30"
+            PLAYGROUND_RATE_LIMIT_BURST: "10"
+            PLAYGROUND_SESSION_RATE_LIMIT_PER_MIN: "20"
+            PLAYGROUND_SESSION_RATE_LIMIT_BURST: "8"
+            PLAYGROUND_READ_RATE_LIMIT_PER_MIN: "180"
+            PLAYGROUND_READ_RATE_LIMIT_BURST: "40"
+            PLAYGROUND_CLEANUP_INTERVAL: 5m
+            PLAYGROUND_TASK_RETENTION: 1h
+        depends_on:
+            playground_db:
+                condition: service_healthy
+        healthcheck:
+            test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/api/v1/readyz"]
+            interval: 10s
+            timeout: 5s
+            retries: 6
+            start_period: 20s
+        restart: unless-stopped
+
+volumes:
+    playground_pgdata:
