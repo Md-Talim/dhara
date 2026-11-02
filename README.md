@@ -233,7 +233,7 @@ type EnqueueResult struct {
 
 ### Option B: Run the whole stack in 5 minutes
 
-Dhara ships as two independent binaries: the **Server** (HTTP API) and the **Worker** (task processor). They share the same database and can be scaled independently.
+Dhara ships as two independent core binaries: the **Server** (HTTP API) and the **Worker** (task processor), plus an optional interactive **Playground**. They share the same database and can be scaled independently.
 
 **Easiest (one command):** starts Postgres in Docker, waits for it, applies migrations, then runs the server and worker together. Ctrl-C stops both:
 
@@ -260,6 +260,21 @@ curl "http://localhost:8080/api/v1/tasks?limit=20"
 ```
 
 The worker binary registers a few demo handlers: `echo`, `send_email`, `always_fail`, `slow_task`, `realistic_work`, so you can see retries, dead-lettering, and timeouts in action. To register your own task types, see [Adding custom task types](#adding-custom-task-types).
+
+## Interactive Playground
+
+The repository also ships a public-facing playground binary that runs a real Dhara client and worker against an isolated PostgreSQL schema. It is useful for showing claiming, retries, dead letters, handler timeouts, and heartbeat/reaper recovery without simulating any state in the browser.
+
+```bash
+make playground-up    # containerized playground + dedicated Postgres
+# open http://localhost:8080
+
+make playground       # or run locally against the development database
+```
+
+The dashboard polls real task rows and worker counters, pauses polling when the tab is hidden, and exposes only predefined handlers. It reuses the existing `dhara.Client`, `dhara.Worker`, demo handlers, metrics handlers, migrations, and reaper. The separate crash demo runs an isolated worker process in a second schema, kills it, and lets the reaper recover the task.
+
+See [docs/PLAYGROUND.md](docs/PLAYGROUND.md) for architecture, configuration, safety properties, the crash demo, retention, testing, and deployment handoff.
 
 ## Migrations
 

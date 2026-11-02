@@ -6,10 +6,10 @@ export DHARA_DATABASE_URL
 # Override explicitly with COMPOSE="podman-compose" if detection misfires.
 COMPOSE ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || (command -v docker-compose >/dev/null 2>&1 && echo docker-compose || echo podman-compose))
 
-.PHONY: help dev dev-server dev-worker dev-watch db-up db-down wait-db migrate migrate-down test build up down
+.PHONY: help dev dev-server dev-worker dev-watch db-up db-down wait-db migrate migrate-down test build playground playground-build playground-up playground-down up down
 
 help: ## Show available targets
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 dev: db-up migrate ## Start Postgres, run migrations, then run server + worker together (Ctrl-C stops both)
 	@echo "Starting API server on http://localhost:8080 and worker..."
@@ -46,10 +46,23 @@ test: ## Run the full test suite (spins up a test database container)
 	chmod +x ./run-tests.sh
 	./run-tests.sh
 
-build: ## Build all three binaries into ./bin
+build: ## Build all binaries into ./bin
 	go build -o bin/dhara-server ./cmd/server
 	go build -o bin/dhara-worker ./cmd/worker
 	go build -o bin/dhara-migrate ./cmd/migrate
+	go build -o bin/dhara-playground ./cmd/playground
+
+playground: db-up ## Run the interactive playground against the local database
+	go run ./cmd/playground
+
+playground-build: ## Build the playground binary into ./bin
+	go build -o bin/dhara-playground ./cmd/playground
+
+playground-up: ## Build and start the playground + its own Postgres in containers
+	$(COMPOSE) -f docker-compose.playground.yml up -d --build
+
+playground-down: ## Stop the playground compose stack (data volume is kept)
+	$(COMPOSE) -f docker-compose.playground.yml down
 
 up: ## Build and start the full compose stack (zero manual steps)
 	$(COMPOSE) up -d --build

@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
-# Single multi-binary build: pass BINARY=server|worker|migrate via build args.
-# Each docker compose service builds its own image with its target binary.
+# Single multi-binary build: pass BINARY=server|worker|migrate|playground via
+# build args. Each docker compose service builds its own image with its target
+# binary.
 
 # ---- Stage 1: Build ----
 FROM golang:1.26.1-alpine AS builder
