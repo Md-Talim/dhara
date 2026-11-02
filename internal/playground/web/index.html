@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Dhara Playground: a live, interactive PostgreSQL-backed task queue demonstration.">
+  <title>Dhara Playground — Live Go + PostgreSQL task queue</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">d</span>
+        <div>
+          <div class="brand-name">dhara<span class="brand-slash">/</span>playground</div>
+          <div class="brand-sub">PostgreSQL-backed task queue · live</div>
+        </div>
+      </div>
+      <div class="top-status">
+        <span class="live"><span id="liveDot" class="dot"></span><span id="liveText">connecting</span></span>
+        <span id="sessionLabel" class="session" title="Browser-generated correlation ID"></span>
+        <button id="newSession" class="link-button" type="button" title="Generate a new local session">new session</button>
+      </div>
+    </header>
+
+    <div id="errorBanner" class="banner" role="alert" hidden>
+      <span id="errorText"></span>
+      <button id="errorClose" class="link-button" type="button">dismiss</button>
+    </div>
+
+    <main>
+      <section class="section" aria-labelledby="overview-title">
+        <div class="section-head">
+          <div>
+            <h1 id="overview-title">Overview</h1>
+            <p class="muted">Live state read from PostgreSQL and the running worker process.</p>
+          </div>
+          <span id="updatedAt" class="updated">—</span>
+        </div>
+        <div class="metric-grid">
+          <article class="metric"><span class="metric-label">Pending</span><strong id="mPending">—</strong><span id="mPendingSub" class="metric-sub">queue depth</span></article>
+          <article class="metric"><span class="metric-label">Running</span><strong id="mRunning">—</strong><span id="mRunningSub" class="metric-sub">claimed now</span></article>
+          <article class="metric"><span class="metric-label">Completed</span><strong id="mCompleted">—</strong><span id="mCompletedSub" class="metric-sub">retained window</span></article>
+          <article class="metric metric-dead"><span class="metric-label">Dead</span><strong id="mDead">—</strong><span id="mDeadSub" class="metric-sub">dead-lettered</span></article>
+          <article class="metric"><span class="metric-label">Canceled</span><strong id="mCanceled">—</strong><span class="metric-sub">terminal</span></article>
+          <article class="metric"><span class="metric-label">Workers</span><strong id="mWorkers">—</strong><span id="mWorkersSub" class="metric-sub">goroutines active</span></article>
+          <article class="metric"><span class="metric-label">Completed / min</span><strong id="mRate">—</strong><span class="metric-sub">last 60 seconds</span></article>
+          <article class="metric"><span class="metric-label">Reaped</span><strong id="mReaped">—</strong><span class="metric-sub">stale recoveries</span></article>
+        </div>
+      </section>
+
+      <div class="two-col">
+        <section class="section" aria-labelledby="controls-title">
+          <div class="section-head">
+            <div>
+              <h2 id="controls-title">Controls</h2>
+              <p class="muted">Every action creates real Dhara tasks. Nothing is simulated in the browser.</p>
+            </div>
+          </div>
+
+          <div class="scenario-grid">
+            <article class="scenario">
+              <div class="scenario-head">
+                <h3>Burst jobs</h3>
+                <span class="tag tag-pending">PENDING → RUNNING</span>
+              </div>
+              <p>Enqueue <code>echo</code> jobs (2s each) and watch the worker pool claim them concurrently.</p>
+              <div class="scenario-form">
+                <label>Batch size <input id="burstSize" type="number" min="1" max="50" value="25"></label>
+                <button id="burstBtn" class="button primary" type="button">Burst 25 fast jobs</button>
+              </div>
+            </article>
+
+            <article class="scenario">
+              <div class="scenario-head">
+                <h3>Flaky jobs</h3>
+                <span class="tag tag-retry">RETRY</span>
+              </div>
+              <p>Retrying jobs fail temporarily, then succeed. “Always fail” exhausts attempts and dead-letters.</p>
+              <div class="scenario-form">
+                <label>Mode
+                  <select id="flakyMode">
+                    <option value="recover">recover after a few retries</option>
+                    <option value="dead">always fail → DEAD</option>
+                  </select>
+                </label>
+                <label>Count <input id="flakyCount" type="number" min="1" max="10" value="3"></label>
+              </div>
+              <button id="flakyBtn" class="button" type="button">Enqueue flaky jobs</button>
+            </article>
+
+            <article class="scenario">
+              <div class="scenario-head">
+                <h3>Slow tasks</h3>
+                <span class="tag tag-running">TIMEOUT</span>
+              </div>
+              <p>Run <code>slow_task</code>. The handler exceeds its deadline and is retried, then dead-lettered.</p>
+              <div class="scenario-form">
+                <label>Count <input id="slowCount" type="number" min="1" max="3" value="1"></label>
+              </div>
+              <button id="slowBtn" class="button" type="button">Run slow tasks</button>
+            </article>
+
+            <article id="crashScenario" class="scenario scenario-crash" hidden>
+              <div class="scenario-head">
+                <h3>Worker crash</h3>
+                <span class="tag tag-reaper">REAPER</span>
+              </div>
+              <p>An isolated worker claims a task, then the playground kills it. Heartbeats stop, the reaper requeues the task, and a restarted worker completes it.</p>
+              <button id="crashBtn" class="button danger" type="button">Crash isolated worker</button>
+              <div id="crashStatus" class="crash-status">
+                <span class="muted">No crash demo running.</span>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="workers-title">
+          <div class="section-head">
+            <div>
+              <h2 id="workers-title">Worker pool</h2>
+              <p class="muted">Dhara exposes process gauges and database leases, not per-worker heartbeats.</p>
+            </div>
+          </div>
+          <div class="worker-summary">
+            <div><span class="metric-label">Configured</span><strong id="wConfigured">—</strong></div>
+            <div><span class="metric-label">Active</span><strong id="wActive">—</strong></div>
+            <div><span class="metric-label">Inflight</span><strong id="wInflight">—</strong></div>
+            <div><span class="metric-label">Prefix</span><code id="wPrefix">—</code></div>
+          </div>
+          <div class="table-wrap compact">
+            <table>
+              <thead>
+                <tr><th>Worker lease</th><th>Current task</th><th>Attempt</th><th>Last heartbeat</th></tr>
+              </thead>
+              <tbody id="leaseRows">
+                <tr><td colspan="4" class="empty">No running task leases.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">Idle worker identities are not synthesized. Rows appear only when PostgreSQL shows a real <code>locked_by</code> lease.</p>
+        </section>
+      </div>
+
+      <section class="section" aria-labelledby="tasks-title">
+        <div class="section-head">
+          <div>
+            <h2 id="tasks-title">Recent tasks</h2>
+            <p class="muted">Click any task to inspect its real state and, for your own tasks, payload and logs.</p>
+          </div>
+          <div class="table-controls">
+            <div class="segmented" role="group" aria-label="Scope">
+              <button id="scopeAll" class="segment active" type="button">All demo tasks</button>
+              <button id="scopeMine" class="segment" type="button">Mine</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Task status">
+          <button class="tab active" data-status="" type="button">All</button>
+          <button class="tab" data-status="PENDING" type="button">Pending</button>
+          <button class="tab" data-status="RUNNING" type="button">Running</button>
+          <button class="tab" data-status="COMPLETED" type="button">Completed</button>
+          <button class="tab" data-status="DEAD" type="button">Dead</button>
+          <button class="tab" data-status="CANCELED" type="button">Canceled</button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="tasks-table">
+            <thead>
+              <tr>
+                <th>Task</th><th>Type</th><th>State</th><th>Attempts</th><th>Worker</th><th>Next run</th><th>Duration</th><th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="taskRows">
+              <tr><td colspan="8" class="empty">Loading tasks…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-foot">
+          <span id="taskCount" class="muted">—</span>
+          <span class="muted">Polling pauses while this tab is hidden.</span>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="metrics-title">
+        <details id="metricsDetails" class="metrics">
+          <summary>
+            <span>
+              <h2 id="metrics-title">Prometheus metrics</h2>
+              <span class="muted">Raw output from Dhara’s existing client and worker handlers.</span>
+            </span>
+            <span class="details-action">expand</span>
+          </summary>
+          <div class="metrics-body">
+            <div class="metrics-head">
+              <button id="metricsRefresh" class="button small" type="button">Refresh metrics</button>
+              <span class="muted">These are process-local counters, not fabricated series.</span>
+            </div>
+            <div class="metrics-grid">
+              <div>
+                <h3>Client / queue gauges <code>/metrics</code></h3>
+                <pre id="clientMetrics">Not loaded.</pre>
+              </div>
+              <div>
+                <h3>Worker execution <code>/worker/metrics</code></h3>
+                <pre id="workerMetrics">Not loaded.</pre>
+              </div>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="explain section">
+        <h2>What you are watching</h2>
+        <div class="explain-grid">
+          <div>
+            <h3>Claiming</h3>
+            <p>Workers claim rows with <code>SELECT … FOR UPDATE SKIP LOCKED</code>. Each PENDING task is claimed by exactly one worker.</p>
+          </div>
+          <div>
+            <h3>Retries</h3>
+            <p>Failed attempts are recorded in PostgreSQL and rescheduled with exponential backoff plus full jitter. The attempt counter is incremented on claim.</p>
+          </div>
+          <div>
+            <h3>Heartbeat vs timeout</h3>
+            <p>A handler timeout is an ordinary handler error. The reaper only acts when a RUNNING task stops refreshing <code>locked_at</code> — for example after the worker process dies.</p>
+          </div>
+          <div>
+            <h3>Dead letters</h3>
+            <p>Once attempts are exhausted, Dhara writes a <code>dead_letters</code> row. Retrying a DEAD task resets attempts and returns it to the ready queue.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Dhara · Go + PostgreSQL · task state is the source of truth</span>
+      <span>Retention window: <span id="retention">configured server-side</span></span>
+    </footer>
+  </div>
+
+  <div id="drawer" class="drawer" hidden>
+    <div class="drawer-backdrop" data-close-drawer></div>
+    <aside class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+      <div class="drawer-head">
+        <div>
+          <span class="eyebrow">Task detail</span>
+          <h2 id="drawerTitle">Task</h2>
+        </div>
+        <button id="drawerClose" class="icon-button" type="button" aria-label="Close task detail">×</button>
+      </div>
+      <div id="drawerBody" class="drawer-body"></div>
+    </aside>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>
